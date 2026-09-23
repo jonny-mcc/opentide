@@ -1,11 +1,11 @@
 ---
 title: Platforms
-description: Seven deployment platforms and five query validators — capability matrix and CLI identifiers.
+description: Eight deployment platforms and six query validators — capability matrix and CLI identifiers.
 ---
 
 # Platforms
 
-OpenTide integrates with **seven detection platforms** through built-in adapters registered at import time (`opentide.platforms` entry points). All ship in the base PyPI package.
+OpenTide integrates with **eight detection platforms** through built-in adapters registered at import time (`opentide.platforms` entry points). All ship in the base PyPI package.
 
 ## Capability matrix
 
@@ -13,6 +13,7 @@ OpenTide integrates with **seven detection platforms** through built-in adapters
 |----------|------------------|:------:|:--------------:|----------------|
 | Microsoft Sentinel | `sentinel` | yes | yes | KQL |
 | Defender for Endpoint | `defender_for_endpoint` | yes | yes | KQL |
+| Elastic Security | `elastic_security` | yes | yes | Kuery / Lucene / EQL / ES\|QL |
 | Splunk Enterprise Security | `splunk` | yes | yes | SPL |
 | SentinelOne | `sentinel_one` | yes | yes | S1QL |
 | Carbon Black Cloud | `carbon_black_cloud` | yes | yes | Lucene |
@@ -47,7 +48,7 @@ Only platforms with `can_validate=True` run syntax validation. For CrowdStrike a
 opentide validate query --platform crowdstrike   # reports unsupported
 ```
 
-For the five that can, validation is **offline by default**: a structural check
+For the six that can, validation is **offline by default**: a structural check
 of the query language that needs no vendor SDK and no tenant. Pass `--live` to
 submit the query to the platform instead, which requires the matching extra and
 credentials. Only the requested platform's engine is imported, so a Sentinel run

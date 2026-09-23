@@ -1,0 +1,82 @@
+  #enabled: false
+  #name: 
+  schema: platform::elastic_security::1.0
+  #status: 
+  #flags:
+    #- 
+  #tenants:
+    #- 
+  #contributors:
+    #- 
+  #type: query
+  #language: 
+
+  #query: |
+    #...
+  #index:
+    #- 
+  #data_view_id: 
+  #from: 
+  #interval: 
+  #to: 
+  #severity: low
+  #risk_score: 3
+  #author:
+    #- 
+  #note: 
+  #setup: 
+  #tags:
+    #- 
+  #filters:
+    #- key: 
+  #max_signals: 3
+  #timestamp_override: 
+  #timestamp_override_fallback_disabled: false
+  #building_block_type: 
+  #rule_id: 
+  #timestamp_field: 
+  #event_category_override: 
+  #tiebreaker_field: 
+  #threshold:
+    #field: 
+    #value: 3
+    #cardinality:
+      #- key: 
+  #threat_index:
+    #- 
+  #threat_mapping:
+    #- entries:
+        #- key: 
+  #threat_query: 
+  #threat_language: 
+  #new_terms_fields:
+    #- 
+  #history_window_start: 
+  #machine_learning_job_id: 
+  #anomaly_threshold: 3
+  #alert_suppression:
+    #group_by:
+      #- 
+    #duration:
+      #key: 
+  #exceptions_list:
+    #- list_id: 
+      #type: 
+      #id: 
+      #namespace_type: single
+  #actions:
+    #- id: 
+      #action_type_id: 
+      #group: default
+      #params:
+        #key: 
+      #frequency:
+        #key: 
+  #response_actions:
+    #- action_type_id: 
+      #params:
+        #key: 
+  #threat:
+    #- key: 
+  #meta:
+    #key: 

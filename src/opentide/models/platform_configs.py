@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from typing import Any, Literal
 
+from pydantic import ConfigDict
+
 from opentide.models.base import TideField, TideModel
 
 
@@ -319,3 +321,45 @@ class SplunkActions(TideModel):
     notable: SplunkNotable | None = None
     risk: SplunkRisk | None = None
     email: SplunkEmail | None = None
+
+
+class ElasticThreshold(TideModel):
+    field: str
+    value: int
+    cardinality: list[dict[str, Any]] | None = None
+
+
+class ElasticAlertSuppression(TideModel):
+    group_by: list[str]
+    duration: dict[str, Any] | None = None
+
+
+class ElasticThreatMapping(TideModel):
+    entries: list[dict[str, Any]]
+
+
+class ElasticAction(TideModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    id: str
+    action_type_id: str
+    group: str = "default"
+    params: dict[str, Any] | None = None
+    frequency: dict[str, Any] | None = None
+
+
+class ElasticResponseAction(TideModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    action_type_id: str | None = None
+    params: dict[str, Any] | None = None
+
+
+class ElasticExceptionListRef(TideModel):
+    model_config = ConfigDict(extra="allow", populate_by_name=True)
+
+    list_id: str
+    type: str
+    id: str | None = None
+    namespace_type: str = "single"
+

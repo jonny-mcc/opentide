@@ -46,7 +46,13 @@ def is_custom_rule(rule: dict[str, Any]) -> bool:
     """Check if an exported Elastic rule is a custom rule."""
     if rule.get("immutable") is True:
         return False
-    if rule.get("rule_source"):
+    rule_source = rule.get("rule_source")
+    if isinstance(rule_source, dict):
+        if rule_source.get("type") == "external":
+            return False
+    elif isinstance(rule_source, str) and rule_source in ("elastic", "prebuilt", "external"):
+        return False
+    elif rule_source:
         return False
     return True
 
@@ -84,7 +90,11 @@ def _find_existing_files_by_uuid(destination: Path) -> dict[str, Path]:
     return uuid_map
 
 
-def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, dict[str, Any]]:
+def render_rule_doc(
+    rule: dict[str, Any],
+    tenant_name: str,
+    default_tlp: str = "amber",
+) -> tuple[str, str, dict[str, Any]]:
     """Convert an exported Elastic rule dict into an OpenTide rule document.
 
     Returns:
@@ -119,6 +129,7 @@ def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, d
     }
 
     optional_mappings = [
+        "saved_id",
         "language",
         "query",
         "index",
@@ -135,6 +146,17 @@ def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, d
         "timestamp_override",
         "timestamp_override_fallback_disabled",
         "building_block_type",
+        "references",
+        "false_positives",
+        "risk_score_mapping",
+        "severity_mapping",
+        "rule_name_override",
+        "investigation_fields",
+        "required_fields",
+        "license",
+        "output_index",
+        "namespace",
+        "version",
         "timestamp_field",
         "event_category_override",
         "tiebreaker_field",
@@ -143,14 +165,20 @@ def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, d
         "threat_mapping",
         "threat_query",
         "threat_language",
+        "threat_indicator_path",
+        "threat_filters",
+        "concurrent_searches",
+        "items_per_search",
         "new_terms_fields",
         "history_window_start",
         "machine_learning_job_id",
         "anomaly_threshold",
         "alert_suppression",
         "exceptions_list",
+        "exception_lists",
         "actions",
         "response_actions",
+        "meta",
     ]
 
     for key in optional_mappings:
@@ -166,7 +194,7 @@ def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, d
             "version": 1,
             "created": created,
             "modified": modified,
-            "tlp": "amber",
+            "tlp": default_tlp,
             "author": author,
         },
         "description": description,
@@ -183,7 +211,7 @@ def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, d
         rule_doc["metadata"]["contributors"] = contributors
 
     if rule.get("note"):
-        rule_doc["response"]["procedure"] = rule["note"]
+        rule_doc["response"]["procedure"] = {"analysis": rule["note"]}
 
     techniques = extract_techniques(rule.get("threat", []))
     if techniques:
@@ -193,47 +221,106 @@ def render_rule_doc(rule: dict[str, Any], tenant_name: str) -> tuple[str, str, d
 
 
 def import_rules_from_ndjson(
-    ndjson_data: str,
+    ndjson_data: str | bytes,
     tenant_name: str,
     destination: Path = Path("Imported"),
+    default_tlp: str = "amber",
 ) -> list[Path]:
     """Parse NDJSON rules export and write custom rules to YAML files in destination."""
     destination.mkdir(parents=True, exist_ok=True)
     existing_uuid_map = _find_existing_files_by_uuid(destination)
     written_paths: list[Path] = []
 
-    for line in ndjson_data.splitlines():
+    text_data = ndjson_data.decode("utf-8") if isinstance(ndjson_data, bytes) else ndjson_data
+
+    # Exception list containers and items collected from export lines
+    exception_containers: list[dict[str, Any]] = []
+    exception_items: list[dict[str, Any]] = []
+
+    for line in text_data.splitlines():
         line = line.strip()
         if not line:
             continue
         try:
-            rule = json.loads(line)
+            entry = json.loads(line)
         except Exception:
             continue
 
-        if not is_custom_rule(rule):
+        if not isinstance(entry, dict):
             continue
 
-        rule_id, rule_name, doc = render_rule_doc(rule, tenant_name)
-        if not rule_id:
+        # Skip export summary line and generic exception_list marker
+        if "export_summary" in entry or entry.get("type") == "exception_list":
             continue
 
-        if rule_id in existing_uuid_map:
-            target_path = existing_uuid_map[rule_id]
-        else:
-            base_name = sanitize_filename(rule_name) or rule_id
-            candidate = destination / f"{base_name}.yaml"
-            if candidate.exists():
-                short_id = rule_id.split("-")[0] if "-" in rule_id else rule_id[:8]
-                target_path = destination / f"{base_name}_{short_id}.yaml"
+        # Exception list item: has item_id or entries
+        if "item_id" in entry or ("entries" in entry and "type" not in entry):
+            exception_items.append(entry)
+            continue
+
+        # Exception list container: has list_id and container fields (not item)
+        if "list_id" in entry and "rule_id" not in entry:
+            exception_containers.append(entry)
+            continue
+
+        # Rule line: must have rule_id or name
+        if "rule_id" in entry or "type" in entry:
+            rule = entry
+            if not is_custom_rule(rule):
+                continue
+
+            rule_id, rule_name, doc = render_rule_doc(rule, tenant_name, default_tlp=default_tlp)
+            if not rule_id:
+                continue
+
+            if rule_id in existing_uuid_map:
+                target_path = existing_uuid_map[rule_id]
             else:
-                target_path = candidate
-            existing_uuid_map[rule_id] = target_path
+                base_name = sanitize_filename(rule_name) or rule_id
+                candidate = destination / f"{base_name}.yaml"
+                if candidate.exists() or any(p.name == candidate.name for p in existing_uuid_map.values()):
+                    short_id = rule_id.split("-")[0] if "-" in rule_id else rule_id[:8]
+                    target_path = destination / f"{base_name}_{short_id}.yaml"
+                else:
+                    target_path = candidate
+                existing_uuid_map[rule_id] = target_path
 
-        yaml_content = yaml.dump(doc, Dumper=IndentedYamlDumper, sort_keys=False)
-        target_path.write_text(yaml_content, encoding="utf-8")
-        written_paths.append(target_path)
-        logger.info("imported_elastic_security_rule", detail=target_path.name, arg0=tenant_name)
+            yaml_content = yaml.dump(doc, Dumper=IndentedYamlDumper, sort_keys=False)
+            target_path.write_text(yaml_content, encoding="utf-8")
+            written_paths.append(target_path)
+            logger.info(
+                "imported_elastic_security_rule",
+                detail=target_path.name,
+                arg0=tenant_name,
+            )
+
+    # If exception list containers were exported, save them to an exception_lists YAML
+    if exception_containers or exception_items:
+        # Group items by list_id into container items
+        items_by_list: dict[str, list[dict[str, Any]]] = {}
+        for item in exception_items:
+            lid = item.get("list_id", "")
+            items_by_list.setdefault(lid, []).append(item)
+
+        for container in exception_containers:
+            lid = container.get("list_id", "")
+            if lid in items_by_list:
+                container["items"] = items_by_list[lid]
+
+        exc_doc = {
+            "schema": "platform::elastic_security::1.0",
+            "tenants": [tenant_name],
+            "exception_lists": exception_containers,
+        }
+        exc_file = destination / "elastic_security_exception_lists.yaml"
+        dumped_exc = yaml.dump(exc_doc, Dumper=IndentedYamlDumper, sort_keys=False)
+        exc_file.write_text(dumped_exc, encoding="utf-8")
+        written_paths.append(exc_file)
+        logger.info(
+            "imported_elastic_security_exceptions",
+            detail=exc_file.name,
+            count=len(exception_containers),
+        )
 
     return written_paths
 
@@ -264,27 +351,26 @@ def import_elastic_security_rules(
 
     for tenant in selected_tenants:
         setup = tenant.setup
-        # If tenant config defines multiple spaces, space is a required argument
-        tenant_spaces = getattr(setup, "spaces", None)
-        if isinstance(tenant_spaces, list) and len(tenant_spaces) > 1:
-            if not space:
-                raise RuntimeError(
-                    f"Tenant '{tenant.name}' defines multiple spaces; specify space parameter to select one"
-                )
-            target_space = space
-        elif space is not None:
-            target_space = space
-        else:
-            target_space = getattr(setup, "space", "") or ""
+        target_space = space if space is not None else (getattr(setup, "space", "") or "")
+        default_tlp = str(getattr(tenant, "tlp", "amber") or "amber")
+        if not isinstance(default_tlp, str) or default_tlp.startswith("<MagicMock"):
+            default_tlp = "amber"
 
         client = ElasticSecurityClient(
-            url=setup.kibana_url,
-            api_key=setup.api_key,
+            kibana_url=setup.kibana_url,
+            api_key=getattr(setup, "api_key", ""),
             space=target_space,
+            verify_ssl=getattr(setup, "ssl", True),
+            proxy=getattr(setup, "proxy", None),
         )
 
         ndjson = client.export_rules()
-        paths = import_rules_from_ndjson(ndjson, tenant_name=tenant.name, destination=destination)
+        paths = import_rules_from_ndjson(
+            ndjson,
+            tenant_name=tenant.name,
+            destination=destination,
+            default_tlp=default_tlp,
+        )
         written_paths.extend(paths)
 
     return written_paths

@@ -17,10 +17,11 @@ from opentide.models.platform_configs import (
     DefenderResponseActions,
     ElasticAction,
     ElasticAlertSuppression,
+    ElasticExceptionList,
     ElasticExceptionListRef,
     ElasticResponseAction,
-    ElasticThreshold,
     ElasticThreatMapping,
+    ElasticThreshold,
     HarfangLabSigma,
     HarfangLabYara,
     SentinelAlert,
@@ -180,6 +181,7 @@ class ElasticSecurityConfig(PlatformConfigBase):
 
     type: Literal[
         "query",
+        "saved_query",
         "eql",
         "esql",
         "threshold",
@@ -187,6 +189,7 @@ class ElasticSecurityConfig(PlatformConfigBase):
         "new_terms",
         "machine_learning",
     ] = "query"
+    saved_id: str | None = None
     language: str | None = None
     query: str | None = TideField(
         None,
@@ -212,6 +215,22 @@ class ElasticSecurityConfig(PlatformConfigBase):
     building_block_type: str | None = None
     rule_id: str | None = None
 
+    # Common fields added in P1
+    references: list[str] | None = None
+    false_positives: list[str] | None = None
+    risk_score_mapping: list[dict[str, Any]] | None = None
+    severity_mapping: list[dict[str, Any]] | None = None
+    rule_name_override: str | None = None
+    investigation_fields: dict[str, Any] | None = None
+    required_fields: list[dict[str, Any]] | None = None
+    license: str | None = None
+    output_index: str | None = None
+    namespace: str | None = None
+    version: int | None = None
+
+    # Exception lists (shared / inline container definitions)
+    exception_lists: list[ElasticExceptionList | dict[str, Any]] | None = None
+
     # EQL specific
     timestamp_field: str | None = None
     event_category_override: str | None = None
@@ -225,13 +244,17 @@ class ElasticSecurityConfig(PlatformConfigBase):
     threat_mapping: list[ElasticThreatMapping | dict[str, Any]] | None = None
     threat_query: str | None = None
     threat_language: str | None = None
+    threat_indicator_path: str | None = None
+    threat_filters: list[dict[str, Any]] | None = None
+    concurrent_searches: int | None = None
+    items_per_search: int | None = None
 
     # New terms specific
     new_terms_fields: list[str] | None = None
     history_window_start: str | None = None
 
     # Machine learning specific
-    machine_learning_job_id: str | None = None
+    machine_learning_job_id: str | list[str] | None = None
     anomaly_threshold: int | None = None
 
     # Suppression & references
@@ -248,7 +271,7 @@ class ElasticSecurityConfig(PlatformConfigBase):
         if isinstance(data, dict):
             rule_type = data.get("type", "query")
             if "language" not in data or data["language"] is None:
-                if rule_type == "query":
+                if rule_type in ("query", "saved_query"):
                     data["language"] = "kuery"
                 elif rule_type == "eql":
                     data["language"] = "eql"
@@ -271,15 +294,25 @@ class ElasticSecurityConfig(PlatformConfigBase):
             if self.query is not None and self.query.strip():
                 raise ValueError("machine_learning rules must not specify 'query'")
             if self.index is not None or self.data_view_id is not None:
-                raise ValueError("machine_learning rules must not specify 'index' or 'data_view_id'")
+                raise ValueError(
+                    "machine_learning rules must not specify 'index' or 'data_view_id'"
+                )
             return self
 
-        if not self.query or not self.query.strip():
-            raise ValueError(f"query must not be empty for {rule_type} rules")
+        if rule_type == "saved_query":
+            if not self.saved_id:
+                raise ValueError("saved_query rules require 'saved_id'")
+            if self.language is not None and self.language not in ("kuery", "lucene"):
+                raise ValueError("saved_query rules must use language 'kuery' or 'lucene'")
+        else:
+            if not self.query or not self.query.strip():
+                raise ValueError(f"query must not be empty for {rule_type} rules")
 
         if rule_type == "esql":
             if self.index is not None or self.data_view_id is not None:
-                raise ValueError("esql rules must not specify 'index' or 'data_view_id' (index is in query)")
+                raise ValueError(
+                    "esql rules must not specify 'index' or 'data_view_id' (index is in query)"
+                )
             if self.language is not None and self.language != "esql":
                 raise ValueError("esql rules must use language 'esql'")
 
@@ -287,19 +320,30 @@ class ElasticSecurityConfig(PlatformConfigBase):
             if self.language is not None and self.language != "eql":
                 raise ValueError("eql rules must use language 'eql'")
 
-        elif rule_type == "query":
+        elif rule_type in ("query", "threshold", "threat_match", "new_terms"):
             if self.language is not None and self.language not in ("kuery", "lucene"):
-                raise ValueError("query rules must use language 'kuery' or 'lucene'")
+                raise ValueError(f"{rule_type} rules must use language 'kuery' or 'lucene'")
 
-        elif rule_type == "threshold":
-            if self.threshold is None:
-                raise ValueError("threshold rules require 'threshold' configuration (field and value)")
+        if rule_type == "threshold" and self.threshold is None:
+            raise ValueError("threshold rules require 'threshold' configuration (field and value)")
+        if self.alert_suppression is not None:
+            if self.alert_suppression.group_by:
+                raise ValueError("threshold rules with alert_suppression do not allow 'group_by'")
+            if not self.alert_suppression.duration:
+                raise ValueError("threshold rules with alert_suppression require 'duration'")
 
         elif rule_type == "threat_match":
             if not self.threat_index:
                 raise ValueError("threat_match rules require 'threat_index'")
             if not self.threat_mapping:
                 raise ValueError("threat_match rules require 'threat_mapping'")
+            if self.threat_language is not None and self.threat_language not in (
+                "kuery",
+                "lucene",
+            ):
+                raise ValueError(
+                    "threat_language for threat_match rules must be 'kuery' or 'lucene'"
+                )
 
         elif rule_type == "new_terms":
             if not self.new_terms_fields:

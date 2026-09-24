@@ -57,7 +57,7 @@ never loads the CrowdStrike or HarfangLab modules. See
 
 ## The `query` field
 
-The five platforms that carry a query string — Sentinel, Defender for Endpoint, Splunk, CrowdStrike, and Carbon Black Cloud — all declare `query` **required and non-blank**. Templates show it uncommented for each of them.
+The platforms that carry a query string — Sentinel, Defender for Endpoint, Splunk, CrowdStrike, Carbon Black Cloud, and Elastic Security — declare `query` as their primary query expression (with Elastic Security supporting `kuery`, `eql`, `esql`, and `lucene`, and allowing `query` to be omitted when `type: saved_query`). Templates show it for each of them.
 
 Splunk `splunk::2.x` objects used a flat layout: `search` for the search string, `cron_schedule` for the schedule, and top-level `throttling`, `threshold`, `notable`, `risk`, and `email`, with `frequency` / `lookback` directly under `scheduling`. All of these are still accepted. `opentide validate` and `opentide deploy` map them onto the v3 layout with the same function, so a 2.x rule validates exactly when it deploys. `search` and `cron_schedule` stay on the object so it round-trips unchanged. A `query` or `scheduling.schedule` set explicitly wins over the legacy key.
 

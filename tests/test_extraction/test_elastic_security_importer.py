@@ -7,6 +7,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import requests
 import yaml
 
 from opentide.extraction.elastic_security_importer import (
@@ -17,17 +18,27 @@ from opentide.extraction.elastic_security_importer import (
     render_rule_doc,
     sanitize_filename,
 )
+from opentide.platforms.elastic_security.client import ElasticSecurityClient
 
 
 def test_sanitize_filename() -> None:
-    assert sanitize_filename('Rule: With <Bad> "Chars" / Pipe | Test') == "Rule With Bad Chars Pipe Test"
+    assert (
+        sanitize_filename('Rule: With <Bad> "Chars" / Pipe | Test')
+        == "Rule With Bad Chars Pipe Test"
+    )
 
 
 def test_is_custom_rule() -> None:
     assert is_custom_rule({"name": "Custom"}) is True
+    assert (
+        is_custom_rule({"name": "Custom with internal", "rule_source": {"type": "internal"}})
+        is True
+    )
     assert is_custom_rule({"name": "Prebuilt", "immutable": True}) is False
     assert is_custom_rule({"name": "Elastic Builtin", "rule_source": "elastic"}) is False
     assert is_custom_rule({"name": "Package Rule", "rule_source": "prebuilt"}) is False
+    assert is_custom_rule({"name": "External Rule", "rule_source": {"type": "external"}}) is False
+    assert is_custom_rule({"name": "Other External", "rule_source": "other_external"}) is False
 
 
 def test_extract_techniques() -> None:
@@ -39,9 +50,7 @@ def test_extract_techniques() -> None:
                 {
                     "id": "T1548",
                     "name": "Abuse Elevation Control Mechanism",
-                    "subtechnique": [
-                        {"id": "T1548.002", "name": "Bypass User Account Control"}
-                    ],
+                    "subtechnique": [{"id": "T1548.002", "name": "Bypass User Account Control"}],
                 },
                 {
                     "id": "T1059",
@@ -92,7 +101,7 @@ def test_render_rule_doc() -> None:
     assert doc["metadata"]["author"] == "Security Team"
     assert doc["metadata"]["contributors"] == ["Jane Doe"]
     assert doc["response"]["alert_severity"] == "High"
-    assert doc["response"]["procedure"] == "Investigate parent process."
+    assert doc["response"]["procedure"] == {"analysis": "Investigate parent process."}
     assert doc["techniques"] == ["T1059.001"]
     assert doc["status"] == "PRODUCTION"
 
@@ -172,20 +181,29 @@ def test_import_elastic_security_rules_no_tenants() -> None:
 def test_import_elastic_security_rules_multiple_spaces_requires_space() -> None:
     mock_tenant = MagicMock()
     mock_tenant.name = "prod"
-    mock_tenant.setup.spaces = ["space_a", "space_b"]
-    with patch("opentide.extraction.elastic_security_importer.OpenTide") as mock_opentide:
+    mock_tenant.setup.space = "default"
+    mock_tenant.setup.kibana_url = "http://localhost:5601"
+    mock_tenant.setup.api_key = "key"
+    mock_tenant.setup.ssl = True
+    mock_tenant.setup.proxy = None
+    with (
+        patch("opentide.extraction.elastic_security_importer.OpenTide") as mock_opentide,
+        patch.object(ElasticSecurityClient, "export_rules", return_value=b""),
+    ):
         mock_opentide.Configurations.Systems.ElasticSecurity.tenants = [mock_tenant]
-        with pytest.raises(RuntimeError, match="defines multiple spaces; specify space parameter"):
-            import_elastic_security_rules()
+        paths = import_elastic_security_rules()
+        assert paths == []
 
 
 def test_import_elastic_security_rules_success(tmp_path: Path) -> None:
     mock_tenant = MagicMock()
     mock_tenant.name = "primary"
+    mock_tenant.tlp = "amber"
     mock_tenant.setup.kibana_url = "http://localhost:5601"
     mock_tenant.setup.api_key = "fake-key"
     mock_tenant.setup.space = "soc"
-    mock_tenant.setup.spaces = None
+    mock_tenant.setup.ssl = True
+    mock_tenant.setup.proxy = None
 
     sample_rule = {
         "rule_id": "rule-999",
@@ -198,15 +216,102 @@ def test_import_elastic_security_rules_success(tmp_path: Path) -> None:
 
     with patch("opentide.extraction.elastic_security_importer.OpenTide") as mock_opentide:
         mock_opentide.Configurations.Systems.ElasticSecurity.tenants = [mock_tenant]
-        with patch("opentide.extraction.elastic_security_importer.ElasticSecurityClient") as mock_client_cls:
+        with patch(
+            "opentide.extraction.elastic_security_importer.ElasticSecurityClient"
+        ) as mock_client_cls:
             mock_client = mock_client_cls.return_value
-            mock_client.export_rules.return_value = json.dumps(sample_rule)
+            mock_client.export_rules.return_value = json.dumps(sample_rule).encode("utf-8")
 
             paths = import_elastic_security_rules(destination=tmp_path)
             assert len(paths) == 1
             assert paths[0].exists()
             mock_client_cls.assert_called_once_with(
-                url="http://localhost:5601",
+                kibana_url="http://localhost:5601",
                 api_key="fake-key",
                 space="soc",
+                verify_ssl=True,
+                proxy=None,
             )
+
+
+def test_import_elastic_security_importer_real_client_mock_http(tmp_path: Path) -> None:
+    """Importer test with real client and mocked HTTP layer, containing full NDJSON fixture."""
+    mock_tenant = MagicMock()
+    mock_tenant.name = "primary"
+    mock_tenant.tlp = "amber"
+    mock_tenant.setup.kibana_url = "http://localhost:5601"
+    mock_tenant.setup.api_key = "test-key"
+    mock_tenant.setup.space = "default"
+    mock_tenant.setup.ssl = True
+    mock_tenant.setup.proxy = None
+
+    custom_rule = {
+        "rule_id": "custom-rule-1",
+        "name": "Custom Rule 1",
+        "description": "Custom rule internal",
+        "rule_source": {"type": "internal"},
+        "type": "query",
+        "query": "process.name: cmd.exe",
+    }
+    prebuilt_rule = {
+        "rule_id": "prebuilt-rule-1",
+        "name": "Prebuilt Elastic Rule",
+        "rule_source": {"type": "external"},
+        "type": "query",
+        "query": "process.name: evil.exe",
+    }
+    exc_container = {
+        "list_id": "test-exception-list",
+        "name": "Test Exception List",
+        "description": "Container for allowed binaries",
+        "type": "detection",
+        "namespace_type": "single",
+    }
+    exc_item = {
+        "item_id": "item-1",
+        "list_id": "test-exception-list",
+        "name": "Allowed Binary",
+        "type": "simple",
+        "entries": [
+            {"field": "process.name", "type": "match", "operator": "included", "value": "safe.exe"}
+        ],
+    }
+    summary_line = {"export_summary": {"rules_count": 2, "exception_lists_count": 1}}
+
+    ndjson_bytes = (
+        "\n".join(
+            [
+                json.dumps(custom_rule),
+                json.dumps(prebuilt_rule),
+                json.dumps(exc_container),
+                json.dumps(exc_item),
+                json.dumps(summary_line),
+            ]
+        )
+        + "\n"
+    ).encode("utf-8")
+
+    fake_response = MagicMock(spec=requests.Response)
+    fake_response.status_code = 200
+    fake_response.content = ndjson_bytes
+
+    with patch("opentide.extraction.elastic_security_importer.OpenTide") as mock_opentide:
+        mock_opentide.Configurations.Systems.ElasticSecurity.tenants = [mock_tenant]
+        with patch("requests.Session.post", return_value=fake_response) as mock_post:
+            import_elastic_security_rules(destination=tmp_path)
+            assert mock_post.called
+            # Custom rule file was written
+            rule_file = tmp_path / "Custom Rule 1.yaml"
+            assert rule_file.exists()
+            rule_data = yaml.safe_load(rule_file.read_text(encoding="utf-8"))
+            assert rule_data["metadata"]["uuid"] == "custom-rule-1"
+
+            # Prebuilt rule was NOT written
+            assert not (tmp_path / "Prebuilt Elastic Rule.yaml").exists()
+
+            # Exception list container + item file was written
+            exc_file = tmp_path / "elastic_security_exception_lists.yaml"
+            assert exc_file.exists()
+            exc_data = yaml.safe_load(exc_file.read_text(encoding="utf-8"))
+            assert exc_data["exception_lists"][0]["list_id"] == "test-exception-list"
+            assert exc_data["exception_lists"][0]["items"][0]["item_id"] == "item-1"

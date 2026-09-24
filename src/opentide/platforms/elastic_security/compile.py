@@ -108,12 +108,13 @@ def compile_rule(
         authors = ["OpenTide"]
 
     # Severity & Risk score
-    raw_severity = (
-        cfg.severity
-        or (rule.response.alert_severity if rule.response and rule.response.alert_severity else "medium")
+    raw_severity = cfg.severity or (
+        rule.response.alert_severity if rule.response and rule.response.alert_severity else "medium"
     )
     severity = SEVERITY_MAP.get(str(raw_severity).lower(), "medium")
-    risk_score = cfg.risk_score if cfg.risk_score is not None else DEFAULT_RISK_SCORES.get(severity, 47)
+    risk_score = (
+        cfg.risk_score if cfg.risk_score is not None else DEFAULT_RISK_SCORES.get(severity, 47)
+    )
 
     payload: dict[str, Any] = {
         "rule_id": rule_id,
@@ -191,6 +192,43 @@ def compile_rule(
     if cfg.building_block_type:
         payload["building_block_type"] = cfg.building_block_type
 
+    # saved_query specific
+    if rule_type == "saved_query" and cfg.saved_id:
+        payload["saved_id"] = cfg.saved_id
+
+    # Common fields (P1)
+    if cfg.references:
+        payload["references"] = list(cfg.references)
+    if cfg.false_positives:
+        payload["false_positives"] = list(cfg.false_positives)
+    if cfg.risk_score_mapping:
+        payload["risk_score_mapping"] = [
+            m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else m
+            for m in cfg.risk_score_mapping
+        ]
+    if cfg.severity_mapping:
+        payload["severity_mapping"] = [
+            m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else m
+            for m in cfg.severity_mapping
+        ]
+    if cfg.rule_name_override:
+        payload["rule_name_override"] = cfg.rule_name_override
+    if cfg.investigation_fields:
+        payload["investigation_fields"] = dict(cfg.investigation_fields)
+    if cfg.required_fields:
+        payload["required_fields"] = [
+            m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else m
+            for m in cfg.required_fields
+        ]
+    if cfg.license:
+        payload["license"] = cfg.license
+    if cfg.output_index:
+        payload["output_index"] = cfg.output_index
+    if cfg.namespace:
+        payload["namespace"] = cfg.namespace
+    if cfg.version is not None:
+        payload["version"] = cfg.version
+
     # EQL specific
     if rule_type == "eql":
         if cfg.timestamp_field:
@@ -203,7 +241,11 @@ def compile_rule(
     # Threshold specific
     if rule_type == "threshold" and cfg.threshold:
         t_data: dict[str, Any] = {
-            "field": cfg.threshold.field,
+            "field": (
+                cfg.threshold.field
+                if not isinstance(cfg.threshold.field, list)
+                else list(cfg.threshold.field)
+            ),
             "value": cfg.threshold.value,
         }
         if cfg.threshold.cardinality:
@@ -216,12 +258,21 @@ def compile_rule(
             payload["threat_index"] = list(cfg.threat_index)
         if cfg.threat_mapping:
             payload["threat_mapping"] = [
-                m.model_dump() if hasattr(m, "model_dump") else m for m in cfg.threat_mapping
+                m.model_dump(exclude_none=True) if hasattr(m, "model_dump") else m
+                for m in cfg.threat_mapping
             ]
         if cfg.threat_query:
             payload["threat_query"] = cfg.threat_query
         if cfg.threat_language:
             payload["threat_language"] = cfg.threat_language
+        if cfg.threat_indicator_path:
+            payload["threat_indicator_path"] = cfg.threat_indicator_path
+        if cfg.threat_filters:
+            payload["threat_filters"] = list(cfg.threat_filters)
+        if cfg.concurrent_searches is not None:
+            payload["concurrent_searches"] = cfg.concurrent_searches
+        if cfg.items_per_search is not None:
+            payload["items_per_search"] = cfg.items_per_search
 
     # New terms specific
     if rule_type == "new_terms":
@@ -233,16 +284,20 @@ def compile_rule(
     # Machine learning specific
     if rule_type == "machine_learning":
         if cfg.machine_learning_job_id:
-            payload["machine_learning_job_id"] = cfg.machine_learning_job_id
+            payload["machine_learning_job_id"] = (
+                list(cfg.machine_learning_job_id)
+                if isinstance(cfg.machine_learning_job_id, list)
+                else cfg.machine_learning_job_id
+            )
         if cfg.anomaly_threshold is not None:
             payload["anomaly_threshold"] = cfg.anomaly_threshold
 
     # Alert suppression
     if cfg.alert_suppression:
         payload["alert_suppression"] = (
-            cfg.alert_suppression.model_dump()
+            cfg.alert_suppression.model_dump(exclude_none=True)
             if hasattr(cfg.alert_suppression, "model_dump")
-            else dict(cfg.alert_suppression)
+            else {k: v for k, v in dict(cfg.alert_suppression).items() if v is not None}
         )
 
     # MITRE ATT&CK threat mapping

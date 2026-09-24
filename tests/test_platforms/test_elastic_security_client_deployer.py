@@ -9,7 +9,6 @@ import requests
 
 from opentide.loading.rule_loader import load_rule_from_dict
 from opentide.models.deployment_enums import StatusStrategy
-from opentide.models.rule import DetectionRule
 from opentide.models.system_config import ConfigurationModels
 from opentide.platforms.elastic_security.client import ElasticSecurityClient
 from opentide.platforms.elastic_security.deployer import ElasticSecurityDeploy
@@ -38,16 +37,27 @@ def _tenant(
 
 def test_client_url_construction() -> None:
     # Default space
-    client_default = ElasticSecurityClient("https://kibana.example.com:5601", "key", space="default")
-    assert client_default.url_for("/api/detection_engine/rules") == "https://kibana.example.com:5601/api/detection_engine/rules"
+    client_default = ElasticSecurityClient(
+        "https://kibana.example.com:5601", "key", space="default"
+    )
+    assert (
+        client_default.url_for("/api/detection_engine/rules")
+        == "https://kibana.example.com:5601/api/detection_engine/rules"
+    )
 
     # Empty space
     client_empty = ElasticSecurityClient("https://kibana.example.com:5601", "key", space="")
-    assert client_empty.url_for("/api/detection_engine/rules") == "https://kibana.example.com:5601/api/detection_engine/rules"
+    assert (
+        client_empty.url_for("/api/detection_engine/rules")
+        == "https://kibana.example.com:5601/api/detection_engine/rules"
+    )
 
     # Named space
     client_space = ElasticSecurityClient("https://kibana.example.com:5601", "key", space="soc")
-    assert client_space.url_for("/api/detection_engine/rules") == "https://kibana.example.com:5601/s/soc/api/detection_engine/rules"
+    assert (
+        client_space.url_for("/api/detection_engine/rules")
+        == "https://kibana.example.com:5601/s/soc/api/detection_engine/rules"
+    )
 
 
 def test_client_headers() -> None:
@@ -129,32 +139,37 @@ def test_deployer_active_rules() -> None:
     mock_batch.tenant = tenant
     mock_batch.strategy = StatusStrategy.RELEASE
 
-    rule = load_rule_from_dict({
-        "name": "Test Rule",
-        "description": "Test description",
-        "metadata": {
-            "uuid": "00000000-0000-4000-8003-000000000001",
-            "schema": "rule::1.0",
-            "version": 1,
-            "created": "2026-01-01",
-            "modified": "2026-01-02",
-            "tlp": "amber",
-            "author": "SecEng",
-        },
-        "response": {"alert_severity": "High"},
-        "status": "PRODUCTION",
-        "configurations": {
-            "elastic_security": {
-                "schema": "platform::elastic_security::1.0",
-                "type": "query",
-                "query": "process.name: cmd.exe",
-                "index": ["logs-*"],
-            }
-        },
-    })
+    rule = load_rule_from_dict(
+        {
+            "name": "Test Rule",
+            "description": "Test description",
+            "metadata": {
+                "uuid": "00000000-0000-4000-8003-000000000001",
+                "schema": "rule::1.0",
+                "version": 1,
+                "created": "2026-01-01",
+                "modified": "2026-01-02",
+                "tlp": "amber",
+                "author": "SecEng",
+            },
+            "response": {"alert_severity": "High"},
+            "status": "PRODUCTION",
+            "configurations": {
+                "elastic_security": {
+                    "schema": "platform::elastic_security::1.0",
+                    "type": "query",
+                    "query": "process.name: cmd.exe",
+                    "index": ["logs-*"],
+                }
+            },
+        }
+    )
     mock_batch.rules = [rule]
 
-    with patch("opentide.platforms.elastic_security.deployer.check_status", return_value=StatusStrategy.RELEASE):
+    with patch(
+        "opentide.platforms.elastic_security.deployer.check_status",
+        return_value=StatusStrategy.RELEASE,
+    ):
         deployer.deploy_mdr(mock_batch, mock_client, tenant)
 
     mock_client.import_rules.assert_called_once()
@@ -178,10 +193,15 @@ def test_deployer_disablement() -> None:
 
     mock_batch.rules = [mock_rule]
 
-    with patch("opentide.platforms.elastic_security.deployer.check_status", return_value=StatusStrategy.DISABLEMENT):
+    with patch(
+        "opentide.platforms.elastic_security.deployer.check_status",
+        return_value=StatusStrategy.DISABLEMENT,
+    ):
         deployer.deploy_mdr(mock_batch, mock_client, tenant)
 
-    mock_client.patch_rule.assert_called_once_with({"rule_id": "00000000-0000-4000-8003-000000000002", "enabled": False})
+    mock_client.patch_rule.assert_called_once_with(
+        {"rule_id": "00000000-0000-4000-8003-000000000002", "enabled": False}
+    )
 
 
 def test_deployer_deletion() -> None:
@@ -202,7 +222,175 @@ def test_deployer_deletion() -> None:
 
     mock_batch.rules = [mock_rule]
 
-    with patch("opentide.platforms.elastic_security.deployer.check_status", return_value=StatusStrategy.DELETION):
+    with patch(
+        "opentide.platforms.elastic_security.deployer.check_status",
+        return_value=StatusStrategy.DELETION,
+    ):
         deployer.deploy_mdr(mock_batch, mock_client, tenant)
 
     mock_client.delete_rule.assert_called_once_with("00000000-0000-4000-8003-000000000003")
+
+
+def test_deployer_delete_404_treated_as_success() -> None:
+    tenant = _tenant()
+    deployer = ElasticSecurityDeploy()
+    mock_client = MagicMock(spec=ElasticSecurityClient)
+    # Simulate 404 response error on delete
+    mock_resp = MagicMock()
+    mock_resp.status_code = 404
+    exc = requests.HTTPError("404 Not Found")
+    exc.response = mock_resp
+    mock_client.delete_rule.side_effect = exc
+
+    mock_batch = MagicMock()
+    mock_batch.tenant = tenant
+    mock_batch.strategy = StatusStrategy.DELETION
+
+    mock_rule = MagicMock()
+    mock_rule.name = "Rule 404"
+    mock_rule.status = "DELETED"
+    mock_rule.metadata.uuid = "00000000-0000-4000-8003-000000000004"
+    mock_rule.configurations.elastic_security.status = "DELETED"
+    mock_rule.configurations.elastic_security.rule_id = "00000000-0000-4000-8003-000000000004"
+    mock_batch.rules = [mock_rule]
+
+    with patch(
+        "opentide.platforms.elastic_security.deployer.check_status",
+        return_value=StatusStrategy.DELETION,
+    ):
+        # Should not raise
+        deployer.deploy_mdr(mock_batch, mock_client, tenant)
+
+
+def test_deployer_disable_500_raises() -> None:
+    tenant = _tenant()
+    deployer = ElasticSecurityDeploy()
+    mock_client = MagicMock(spec=ElasticSecurityClient)
+    mock_client.patch_rule.side_effect = requests.HTTPError("500 Internal Server Error")
+
+    mock_batch = MagicMock()
+    mock_batch.tenant = tenant
+    mock_batch.strategy = StatusStrategy.DISABLEMENT
+
+    mock_rule = MagicMock()
+    mock_rule.name = "Rule 500"
+    mock_rule.status = "DISABLED"
+    mock_rule.metadata.uuid = "00000000-0000-4000-8003-000000000005"
+    mock_rule.configurations.elastic_security.status = "DISABLED"
+    mock_rule.configurations.elastic_security.rule_id = "00000000-0000-4000-8003-000000000005"
+    mock_batch.rules = [mock_rule]
+
+    with (
+        patch(
+            "opentide.platforms.elastic_security.deployer.check_status",
+            return_value=StatusStrategy.DISABLEMENT,
+        ),
+        pytest.raises(requests.HTTPError, match="500 Internal Server Error"),
+    ):
+        deployer.deploy_mdr(mock_batch, mock_client, tenant)
+
+
+def test_deployer_import_partial_failure_raises() -> None:
+    tenant = _tenant()
+    deployer = ElasticSecurityDeploy()
+    mock_client = MagicMock(spec=ElasticSecurityClient)
+    # Simulate HTTP 200 with partial failure in body
+    mock_client.import_rules.return_value = {
+        "success": False,
+        "success_count": 0,
+        "errors": [
+            {"rule_id": "rule-err-1", "error": {"message": "Invalid query syntax in Kuery"}}
+        ],
+    }
+
+    mock_batch = MagicMock()
+    mock_batch.tenant = tenant
+    mock_batch.strategy = StatusStrategy.RELEASE
+
+    rule = load_rule_from_dict(
+        {
+            "name": "Failed Rule",
+            "description": "Rule that fails import",
+            "metadata": {
+                "uuid": "rule-err-1",
+                "schema": "rule::1.0",
+                "version": 1,
+                "created": "2026-01-01",
+                "modified": "2026-01-02",
+                "tlp": "amber",
+                "author": "SecEng",
+            },
+            "response": {"alert_severity": "High"},
+            "status": "PRODUCTION",
+            "configurations": {
+                "elastic_security": {
+                    "schema": "platform::elastic_security::1.0",
+                    "type": "query",
+                    "query": "syntax error | pipe",
+                    "index": ["logs-*"],
+                }
+            },
+        }
+    )
+    mock_batch.rules = [rule]
+
+    with (
+        patch(
+            "opentide.platforms.elastic_security.deployer.check_status",
+            return_value=StatusStrategy.RELEASE,
+        ),
+        patch(
+            "opentide.platforms.elastic_security.deployer.compile_rule",
+            return_value={"rule_id": "rule-err-1", "name": "Failed Rule"},
+        ),
+        pytest.raises(
+            RuntimeError,
+            match="Elastic Security rule import failed: rule 'rule-err-1': Invalid query syntax in Kuery",
+        ),
+    ):
+        deployer.deploy_mdr(mock_batch, mock_client, tenant)
+
+
+def test_deployer_deploy_via_real_tide_deployment() -> None:
+    """Test calling deploy(...) through real TideDeployment without mocking the planner."""
+    rule = load_rule_from_dict(
+        {
+            "name": "Integration Rule",
+            "description": "Integration test rule",
+            "metadata": {
+                "uuid": "00000000-0000-4000-8003-000000000099",
+                "schema": "rule::1.0",
+                "version": 1,
+                "created": "2026-01-01",
+                "modified": "2026-01-02",
+                "tlp": "amber",
+                "author": "SecEng",
+            },
+            "response": {"alert_severity": "High"},
+            "status": "PRODUCTION",
+            "configurations": {
+                "elastic_security": {
+                    "schema": "platform::elastic_security::1.0",
+                    "type": "query",
+                    "query": "process.name: test.exe",
+                    "index": ["logs-*"],
+                }
+            },
+        }
+    )
+
+    tenant = _tenant()
+    deployer = ElasticSecurityDeploy()
+
+    fake_resp = MagicMock(spec=requests.Response)
+    fake_resp.status_code = 200
+    fake_resp.json.return_value = {"success": True, "success_count": 1}
+
+    with patch("opentide.deployment.planning.OpenTide") as mock_opentide:
+        mock_opentide.Configurations.Systems.ElasticSecurity.tenants = [tenant]
+        with patch("requests.Session.post", return_value=fake_resp) as mock_post:
+            deployer.deploy([rule])
+            assert mock_post.called
+            # The client should have made a call to _import
+            call_url = mock_post.call_args[0][0]
+            assert "/api/detection_engine/rules/_import" in call_url

@@ -71,6 +71,7 @@ _LINE_COMMENTS: dict[str, tuple[str, ...]] = {
 _BLOCK_COMMENTS: dict[str, tuple[str, str]] = {
     SPL: ("```", "```"),
     EQL: ("/*", "*/"),
+    ESQL: ("/*", "*/"),
 }
 #: Lucene's standard parser only knows the double-quoted phrase, so an
 #: apostrophe inside a Carbon Black value is data, not an unterminated literal.
@@ -453,7 +454,7 @@ def _check_dangling_operator(masked: str) -> list[SyntaxFinding]:
     return [_finding("dangling_operator", f"Query ends with the operator '{tail}'", masked, index)]
 
 
-ESQL_SOURCE_COMMANDS = frozenset({"FROM", "ROW", "SHOW", "METRICS"})
+ESQL_SOURCE_COMMANDS = frozenset({"FROM", "ROW", "SHOW", "METRICS", "TS"})
 
 
 def _check_esql_source_command(masked: str) -> list[SyntaxFinding]:
@@ -486,7 +487,12 @@ def _check_kuery_syntax(masked: str) -> list[SyntaxFinding]:
     index = masked.find("|")
     while index != -1:
         findings.append(
-            _finding("unexpected_pipe", "Kuery does not support pipeline operator '|'", masked, index)
+            _finding(
+                "unexpected_pipe",
+                "Kuery does not support pipeline operator '|'",
+                masked,
+                index,
+            )
         )
         index = masked.find("|", index + 1)
     return findings
@@ -519,7 +525,12 @@ def _detect_elastic_language(query: str) -> str:
     if first_token in ESQL_SOURCE_COMMANDS or stripped.startswith("|"):
         return ESQL
     first_word = stripped.split()[0].lower()
-    if first_word in _EQL_KEYWORDS or " where " in stripped.lower() or (stripped.startswith("[") and "]" in stripped):
+    is_eql = (
+        first_word in _EQL_KEYWORDS
+        or " where " in stripped.lower()
+        or (stripped.startswith("[") and "]" in stripped)
+    )
+    if is_eql:
         return EQL
     return KUERY
 
@@ -602,9 +613,7 @@ def _sentinel_one_specs(
     return specs
 
 
-def _elastic_security_specs(
-    config: Mapping[str, Any], *, uuid: str, rule: str
-) -> list[QuerySpec]:
+def _elastic_security_specs(config: Mapping[str, Any], *, uuid: str, rule: str) -> list[QuerySpec]:
     """Elastic Security holds query (kuery, eql, esql, lucene) and optional threat_query."""
     rule_type = config.get("type", "query")
     if rule_type == "machine_learning":

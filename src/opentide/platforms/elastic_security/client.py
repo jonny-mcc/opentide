@@ -6,6 +6,8 @@ from typing import Any
 
 import requests
 import structlog
+from requests.adapters import HTTPAdapter
+from urllib3.util import Retry
 
 logger = structlog.get_logger(__name__)
 
@@ -20,12 +22,14 @@ class ElasticSecurityClient:
         space: str = "default",
         verify_ssl: bool = True,
         timeout: int = 30,
+        proxy: str | None = None,
     ) -> None:
         self.kibana_url = kibana_url.rstrip("/")
         self.api_key = api_key
         self.space = space or "default"
         self.verify_ssl = verify_ssl
         self.timeout = timeout
+        self.proxy = proxy
 
         if self.space and self.space != "default":
             self.base_url = f"{self.kibana_url}/s/{self.space}"
@@ -34,9 +38,24 @@ class ElasticSecurityClient:
 
         self.session = requests.Session()
         self.session.verify = self.verify_ssl
+        if self.proxy:
+            self.session.proxies = {"http": self.proxy, "https": self.proxy}
+
+        # Retries with backoff for 429, 500, 502, 503, 504
+        retries = Retry(
+            total=3,
+            backoff_factor=0.5,
+            status_forcelist=[429, 500, 502, 503, 504],
+            raise_on_status=False,
+        )
+        adapter = HTTPAdapter(max_retries=retries)
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
+
         headers = {
             "kbn-xsrf": "true",
             "Accept": "application/json",
+            "elastic-api-version": "2023-10-31",
         }
         if self.api_key:
             headers["Authorization"] = f"ApiKey {self.api_key}"
@@ -63,10 +82,7 @@ class ElasticSecurityClient:
             "overwrite_exceptions": str(overwrite_exceptions).lower(),
             "overwrite_action_connectors": str(overwrite_action_connectors).lower(),
         }
-        if isinstance(ndjson_data, str):
-            payload_bytes = ndjson_data.encode("utf-8")
-        else:
-            payload_bytes = ndjson_data
+        payload_bytes = ndjson_data.encode("utf-8") if isinstance(ndjson_data, str) else ndjson_data
 
         files = {
             "file": ("rules.ndjson", payload_bytes, "application/x-ndjson"),
@@ -97,10 +113,10 @@ class ElasticSecurityClient:
         """Export detection rules as NDJSON."""
         url = self._url("/api/detection_engine/rules/_export")
         params = {"exclude_export_details": str(exclude_export_details).lower()}
-        body: dict[str, Any] = {}
+        body: dict[str, Any] = {"objects": []}
         if rule_ids:
             body["objects"] = [{"rule_id": rid} for rid in rule_ids]
-        resp = self.session.post(url, params=params, json=body if body else None, timeout=self.timeout)
+        resp = self.session.post(url, params=params, json=body, timeout=self.timeout)
         resp.raise_for_status()
         return resp.content
 
@@ -123,9 +139,22 @@ class ElasticSecurityClient:
         resp.raise_for_status()
         return resp.json()
 
-    def preview_rule(self, payload: dict[str, Any]) -> dict[str, Any]:
+    def preview_rule(
+        self,
+        payload: dict[str, Any],
+        invocation_count: int = 1,
+        timeframe_end: str | None = None,
+    ) -> dict[str, Any]:
         """Execute a rule preview to test query and configuration."""
         url = self._url("/api/detection_engine/rules/_preview")
-        resp = self.session.post(url, json=payload, timeout=self.timeout)
+        preview_body = dict(payload)
+        preview_body.setdefault("invocationCount", invocation_count)
+        if not timeframe_end:
+            from datetime import datetime, timezone
+
+            timeframe_end = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
+        preview_body.setdefault("timeframeEnd", timeframe_end)
+
+        resp = self.session.post(url, json=preview_body, timeout=self.timeout)
         resp.raise_for_status()
         return resp.json()

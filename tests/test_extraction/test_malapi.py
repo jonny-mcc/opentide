@@ -126,6 +126,9 @@ def malapi_module(tmp_path_factory):
         "https://malapi.io/winapi/CreateFileW": MagicMock(text=_detail_html()),
     }
 
+    saved_requests = sys.modules.get("requests")
+    saved_bs4 = sys.modules.get("bs4")
+
     requests_mod = types.ModuleType("requests")
     requests_mod.get = lambda url, timeout=30: responses[url]
     bs4_mod = types.ModuleType("bs4")
@@ -147,6 +150,7 @@ def malapi_module(tmp_path_factory):
 
             malapi.VOCAB_FILE_PATH = export_path
             yield malapi
+    finally:
     finally:
         for name, module in saved_modules.items():
             if module is None:

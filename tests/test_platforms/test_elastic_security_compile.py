@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from unittest.mock import MagicMock
+from typing import Any
 
 import pytest
 
@@ -161,7 +161,11 @@ def test_compile_threat_match_rule(snapshot) -> None:
         "threat_mapping": [
             {
                 "entries": [
-                    {"field": "file.hash.sha256", "type": "mapping", "value": "threat.indicator.file.hash.sha256"}
+                    {
+                        "field": "file.hash.sha256",
+                        "type": "mapping",
+                        "value": "threat.indicator.file.hash.sha256",
+                    }
                 ]
             }
         ],
@@ -295,3 +299,158 @@ def test_version_compatibility_gating() -> None:
     # Response actions require >= 8.14.0
     with pytest.raises(ValueError, match="response_actions require Kibana 8.14.0+"):
         check_version_compatibility({"response_actions": []}, "8.13.0")
+
+
+@pytest.mark.parametrize(
+    ("rule_type", "type_fields"),
+    [
+        (
+            "query",
+            {
+                "language": "kuery",
+                "query": "process.name: cmd.exe",
+                "index": ["logs-*"],
+            },
+        ),
+        (
+            "saved_query",
+            {
+                "saved_id": "saved-query-1234",
+                "language": "kuery",
+                "query": "process.name: powershell.exe",
+                "index": ["logs-*"],
+            },
+        ),
+        (
+            "eql",
+            {
+                "language": "eql",
+                "query": "process where process.name == 'whoami.exe'",
+                "index": ["winlogbeat-*"],
+                "timestamp_field": "@timestamp",
+                "event_category_override": "process",
+                "tiebreaker_field": "event.sequence",
+            },
+        ),
+        (
+            "esql",
+            {
+                "language": "esql",
+                "query": "FROM logs-* | WHERE process.name == 'cmd.exe'",
+            },
+        ),
+        (
+            "threshold",
+            {
+                "language": "kuery",
+                "query": "event.category: authentication",
+                "index": ["logs-*"],
+                "threshold": {"field": ["user.name"], "value": 5},
+                "alert_suppression": {"duration": {"value": 1, "unit": "h"}},
+            },
+        ),
+        (
+            "threat_match",
+            {
+                "language": "kuery",
+                "query": "file.hash.sha256: *",
+                "index": ["logs-*"],
+                "threat_index": ["threat-*"],
+                "threat_mapping": [
+                    {
+                        "entries": [
+                            {
+                                "field": "file.hash.sha256",
+                                "type": "mapping",
+                                "value": "threat.indicator.file.hash.sha256",
+                            }
+                        ]
+                    }
+                ],
+                "threat_query": "threat.indicator.type: hash",
+                "threat_language": "kuery",
+                "threat_indicator_path": "threat.indicator",
+                "concurrent_searches": 4,
+                "items_per_search": 100,
+            },
+        ),
+        (
+            "new_terms",
+            {
+                "language": "kuery",
+                "query": "process.name: *",
+                "index": ["logs-*"],
+                "new_terms_fields": ["user.name"],
+                "history_window_start": "now-7d",
+            },
+        ),
+        (
+            "machine_learning",
+            {
+                "machine_learning_job_id": ["v3_rare_process_by_user"],
+                "anomaly_threshold": 75,
+            },
+        ),
+    ],
+)
+def test_roundtrip_all_eight_rule_types(rule_type: str, type_fields: dict) -> None:
+    """Parametrized test round-tripping realistic Kibana export payloads per rule type.
+
+    Covers: export payload -> import doc -> load model -> compile payload with no field loss.
+    """
+    from opentide.extraction.elastic_security_importer import render_rule_doc
+
+    kibana_export_payload: dict[str, Any] = {
+        "rule_id": f"roundtrip-uuid-{rule_type}",
+        "name": f"Roundtrip {rule_type} Rule",
+        "description": f"Testing roundtrip for {rule_type}",
+        "author": ["Security Team", "Jane Doe"],
+        "severity": "high",
+        "risk_score": 73,
+        "type": rule_type,
+        "enabled": True,
+        "references": ["https://example.com/ref1"],
+        "false_positives": ["Known admin scripts"],
+        "license": "Elastic License v2",
+        "output_index": ".alerts-security.alerts-default",
+        "namespace": "default",
+        "version": 1,
+        "note": "Investigation note",
+        **type_fields,
+    }
+
+    # 1. Importer: render_rule_doc
+    rid, rname, doc = render_rule_doc(kibana_export_payload, tenant_name="primary")
+    assert rid == kibana_export_payload["rule_id"]
+
+    # 2. Model: load_rule_from_dict
+    rule = load_rule_from_dict(doc)
+
+    # 3. Compile: compile_rule
+    compiled = compile_rule(rule, _tenant())
+
+    # Verify critical common fields preserved
+    assert compiled["rule_id"] == kibana_export_payload["rule_id"]
+    assert compiled["name"] == kibana_export_payload["name"]
+    assert compiled["type"] == rule_type
+    assert compiled["references"] == kibana_export_payload["references"]
+    assert compiled["false_positives"] == kibana_export_payload["false_positives"]
+    assert compiled["license"] == kibana_export_payload["license"]
+    assert compiled["output_index"] == kibana_export_payload["output_index"]
+    assert compiled["namespace"] == kibana_export_payload["namespace"]
+    assert compiled["version"] == kibana_export_payload["version"]
+
+    # Verify type-specific fields preserved
+    for k, v in type_fields.items():
+        assert k in compiled, f"Field '{k}' missing from compiled rule of type '{rule_type}'"
+        if isinstance(v, dict):
+            # Dict values like threshold, alert_suppression may be transformed slightly
+            for sub_k, sub_v in v.items():
+                assert compiled[k].get(sub_k) == sub_v
+        elif isinstance(v, list) and v and isinstance(v[0], dict):
+            # Nested list of dicts like threat_mapping
+            assert len(compiled[k]) == len(v)
+        else:
+            assert compiled[k] == v, (
+                f"Field '{k}' value mismatch in compiled rule of type '{rule_type}'"
+            )

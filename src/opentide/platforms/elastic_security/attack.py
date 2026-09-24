@@ -133,11 +133,11 @@ def resolve_elastic_threat(data: DetectionRule) -> list[dict[str, Any]]:
 
         is_subtechnique = "." in tech_id
         parent_id = tech_id.split(".")[0] if is_subtechnique else tech_id
-        parent_entry = (
-            get_vocab_entry("att&ck", parent_id) if is_subtechnique else entry
-        ) or entry
+        parent_entry = (get_vocab_entry("att&ck", parent_id) if is_subtechnique else entry) or entry
 
-        parent_name = parent_entry.get("name", parent_id) if isinstance(parent_entry, dict) else parent_id
+        parent_name = (
+            parent_entry.get("name", parent_id) if isinstance(parent_entry, dict) else parent_id
+        )
         if ":" in parent_name:
             parent_name = parent_name.split(":", 1)[0].strip()
         parent_link = (
@@ -147,10 +147,9 @@ def resolve_elastic_threat(data: DetectionRule) -> list[dict[str, Any]]:
         )
 
         tech_name = entry.get("name", tech_id) if isinstance(entry, dict) else tech_id
+        tech_link_fallback = f"https://attack.mitre.org/techniques/{tech_id.replace('.', '/')}"
         tech_link = (
-            entry.get("link", f"https://attack.mitre.org/techniques/{tech_id.replace('.', '/')}")
-            if isinstance(entry, dict)
-            else f"https://attack.mitre.org/techniques/{tech_id.replace('.', '/')}"
+            entry.get("link", tech_link_fallback) if isinstance(entry, dict) else tech_link_fallback
         )
 
         subtechnique_name = tech_name

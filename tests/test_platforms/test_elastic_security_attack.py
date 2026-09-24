@@ -4,9 +4,6 @@ from __future__ import annotations
 
 from unittest.mock import MagicMock, patch
 
-import pytest
-
-from opentide.models.rule import DetectionRule
 from opentide.platforms.elastic_security.attack import (
     TACTIC_MAP,
     normalize_tactic,

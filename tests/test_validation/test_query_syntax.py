@@ -329,12 +329,14 @@ def test_validate_platform_queries_rejects_a_platform_without_a_language() -> No
         ('user.name:"admin" and not host.name:"prod-*"', "kuery"),
         (r"file.path:C\:\\Windows\\System32\\*.exe", "kuery"),
         ('process where process.name == "whoami.exe"', "eql"),
-        ('sequence with maxspan=1h [process where true] [file where true]', "eql"),
-        ("process where process.name == \"test\" // a comment\n", "eql"),
-        ("FROM logs-* | WHERE process.name == \"whoami\" | LIMIT 5", "esql"),
+        ("sequence with maxspan=1h [process where true] [file where true]", "eql"),
+        ('process where process.name == "test" // a comment\n', "eql"),
+        ('FROM logs-* | WHERE process.name == "whoami" | LIMIT 5', "esql"),
         ('ROW a = 1, b = "hello" | KEEP a', "esql"),
         ("SHOW info | LIMIT 1", "esql"),
         ("| FROM logs-* | KEEP host.name", "esql"),
+        ("/* block comment */ FROM logs-* | KEEP host.name", "esql"),
+        ("FROM logs-* /* inline comment */ | LIMIT 5", "esql"),
     ],
 )
 def test_elastic_security_valid_queries(query: str, language: str) -> None:
@@ -423,4 +425,3 @@ def test_elastic_security_validation_aggregates_mixed_languages() -> None:
     assert finding["uuid"] == "uuid-esql-bad"
     assert finding["language"] == "esql"
     assert finding["code"] == "invalid_source_command"
-

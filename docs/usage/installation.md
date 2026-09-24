@@ -83,7 +83,7 @@ OpenTide ships platform logic in the wheel. **Third-party SDKs** are only requir
 | Splunk | `opentide[splunk]` | `splunk-sdk` `pandas` |
 | Carbon Black Cloud | `opentide[carbon-black]` | `carbon-black-cloud-sdk` |
 
-Defender, CrowdStrike, SentinelOne, and HarfangLab use HTTP clients bundled with opentide.
+Defender, CrowdStrike, SentinelOne, HarfangLab, and Elastic Security use HTTP clients bundled with opentide.
 
 Extras are only needed for live API calls — live deploy, and `opentide validate
 query --live`. The default `opentide validate query` is offline and works on a
@@ -98,6 +98,7 @@ These `--platform` values are built into the package — **no separate PyPI extr
 |--------------|---------|
 | `sentinel` | Microsoft Sentinel |
 | `defender_for_endpoint` | Defender for Endpoint |
+| `elastic_security` | Elastic Security |
 | `splunk` | Splunk Enterprise Security |
 | `sentinel_one` | SentinelOne |
 | `carbon_black_cloud` | Carbon Black Cloud |

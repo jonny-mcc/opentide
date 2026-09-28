@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import importlib
 import json
+from pathlib import Path
 
 from typer.testing import CliRunner
 
@@ -305,6 +306,27 @@ def test_setup_vscode_snippets_command_fails_without_templates(tmp_path) -> None
     assert '"status": "failed"' in result.stdout
     assert '"ok": false' in result.stdout
     assert '"files": []' in result.stdout
+
+
+def test_json_setup_quotes_a_dot_target(tmp_path: Path, monkeypatch) -> None:
+    """#346: ``Path('.')`` plus the sentence period rendered the target as ``..``."""
+    monkeypatch.chdir(tmp_path)
+    result = runner.invoke(
+        app,
+        ["--json", "setup", "--platform", "sentinel"],
+        env={"OPENTIDE_REPO_ROOT": None, "OPENTIDE_TIDE_WORKSPACE": None},
+    )
+    assert result.exit_code != 0, result.stdout + result.stderr
+    assert "write to '.'" in result.stdout
+    assert "write to .." not in result.stdout
+    absolute = tmp_path / "empty"
+    named = runner.invoke(
+        app,
+        ["--json", "setup", "--path", str(absolute), "--platform", "sentinel"],
+        env={"OPENTIDE_REPO_ROOT": None, "OPENTIDE_TIDE_WORKSPACE": None},
+    )
+    assert named.exit_code != 0
+    assert f"write to '{absolute.as_posix()}'" in named.stdout
 
 
 def test_setup_ci_none_alone_is_not_noop(tmp_path, monkeypatch) -> None:

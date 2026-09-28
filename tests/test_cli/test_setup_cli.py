@@ -308,6 +308,78 @@ def test_setup_vscode_snippets_command_fails_without_templates(tmp_path) -> None
     assert '"files": []' in result.stdout
 
 
+def test_setup_yes_ci_none_still_scaffolds(tmp_path: Path) -> None:
+    """#349: ``--yes --ci none`` exited 0 with ``steps: []`` and wrote nothing."""
+    result = runner.invoke(
+        app,
+        ["--json", "setup", "--yes", "--ci", "none", "--path", str(tmp_path)],
+        env={"OPENTIDE_REPO_ROOT": None, "OPENTIDE_TIDE_WORKSPACE": None},
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    assert payload["message"] == "Setup complete"
+    assert any(step["step"] == "repo" for step in payload["steps"])
+    assert (tmp_path / "README.md").is_file()
+    assert not (tmp_path / ".github" / "workflows" / "opentide.yml").exists()
+    assert not (tmp_path / ".gitlab-ci.yml").exists()
+    assert not (tmp_path / "azure-pipelines.yml").exists()
+    assert payload.get("warnings", []) == []
+
+
+def test_ci_only_flags_without_a_platform_are_named(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        [
+            "--json",
+            "setup",
+            "--yes",
+            "--path",
+            str(tmp_path),
+            "--no-staging",
+            "--no-inflight",
+            "--explorer-pages",
+            "--default-branch",
+            "trunk",
+            "--python-version",
+            "3.11",
+        ],
+        env={"OPENTIDE_REPO_ROOT": None, "OPENTIDE_TIDE_WORKSPACE": None},
+    )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    payload = json.loads(result.stdout)
+    warning = " ".join(payload["warnings"])
+    for flag in (
+        "--default-branch",
+        "--no-staging",
+        "--no-inflight",
+        "--explorer-pages",
+        "--python-version",
+    ):
+        assert flag in warning
+    assert (tmp_path / "README.md").is_file()
+    assert not (tmp_path / ".github" / "workflows" / "opentide.yml").exists()
+
+
+def test_setup_ci_help_does_not_offer_none() -> None:
+    result = runner.invoke(app, ["setup", "ci", "--help"])
+    assert result.exit_code == 0, result.stdout
+    arguments = result.stdout.split("Arguments", 1)[1].split("Options", 1)[0]
+    assert "none" not in arguments
+    assert "github" in arguments
+    assert "gitlab" in arguments
+    assert "azure" in arguments
+
+
+def test_setup_ci_none_is_rejected(tmp_path: Path) -> None:
+    result = runner.invoke(
+        app,
+        ["setup", "ci", "none", "--yes", "--path", str(tmp_path)],
+    )
+    assert result.exit_code == 2
+    assert "Choose github, gitlab, or azure" in result.stdout + result.stderr
+    assert not (tmp_path / ".github").exists()
+
+
 def test_json_setup_quotes_a_dot_target(tmp_path: Path, monkeypatch) -> None:
     """#346: ``Path('.')`` plus the sentence period rendered the target as ``..``."""
     monkeypatch.chdir(tmp_path)

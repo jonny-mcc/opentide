@@ -20,6 +20,7 @@ def test_cli_help_lists_commands() -> None:
         "generate",
         "validate",
         "deploy",
+        "share",
         "info",
     ):
         assert command in result.stdout

@@ -148,6 +148,13 @@ def test_share_help_lists_the_subcommands(cli_runner) -> None:
     assert result.exit_code == 0
     for name in ("push", "preview", "status", "retract", "targets"):
         assert name in result.stdout
+    assert "--changed" in result.stdout
+    push = cli_runner.invoke(app, ["share", "push", "--help"])
+    assert push.exit_code == 0
+    assert "--changed" in push.stdout
+    preview = cli_runner.invoke(app, ["share", "preview", "--help"])
+    assert preview.exit_code == 0
+    assert "--changed" not in preview.stdout
 
 
 def test_usage_and_config_preflight(invoke_cli, tide_corpus_repo: Path) -> None:
@@ -384,3 +391,235 @@ def test_catalogue_ignores_a_malformed_index(
     unpathed = _catalogue()
     assert len(unpathed) == 1
     assert unpathed[0].parse_error == "missing"
+
+
+_OUTSIDE_CI = {"CI": "", "GITHUB_ACTIONS": "", "TF_BUILD": ""}
+_GITHUB_PUSH = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push"}
+_OBJECTIVE = "objects/objectives/objective-0001-credential-access.yaml"
+_OBJECTIVE_UUID = "00000000-0000-4000-8002-000000000001"
+
+
+def _forbid_diff(_plan: object) -> list[str]:
+    raise AssertionError("diff_calculation must not run")
+
+
+def test_changed_stops_before_git_or_http(
+    invoke_cli, tide_corpus_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr("opentide.deployment.git_repo.diff_calculation", _forbid_diff)
+    monkeypatch.setattr("opentide.sharing.engine.PyMispClient", _Persistent)
+    _write_sharing(tide_corpus_repo)
+    monkeypatch.setenv("MISP_LAB_KEY", KEY)
+
+    outside = invoke_cli("share", "push", "--changed", repo=tide_corpus_repo, extra_env=_OUTSIDE_CI)
+    assert outside.exit_code == 1, outside.stdout
+    assert json.loads(outside.stdout)["preflight"] == "changed_outside_ci"
+    assert _Persistent.events == []
+
+    for event in ("pull_request", "pull_request_target"):
+        pull = invoke_cli(
+            "share",
+            "push",
+            "--changed",
+            repo=tide_corpus_repo,
+            extra_env={"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": event},
+        )
+        assert pull.exit_code == 1, pull.stdout
+        assert json.loads(pull.stdout)["preflight"] == "changed_on_pull_request"
+
+    gitlab = invoke_cli(
+        "share",
+        "push",
+        "--changed",
+        repo=tide_corpus_repo,
+        extra_env={"CI_PIPELINE_SOURCE": "merge_request_event"},
+    )
+    assert json.loads(gitlab.stdout)["preflight"] == "changed_on_pull_request"
+
+    azure = invoke_cli(
+        "share",
+        "push",
+        "--changed",
+        repo=tide_corpus_repo,
+        extra_env={"TF_BUILD": "True", "BUILD_REASON": "PullRequest"},
+    )
+    assert json.loads(azure.stdout)["preflight"] == "changed_on_pull_request"
+
+    unknown = invoke_cli(
+        "share",
+        "push",
+        "--changed",
+        "--target",
+        "missing",
+        repo=tide_corpus_repo,
+        extra_env=_GITHUB_PUSH,
+    )
+    assert unknown.exit_code == 1
+    assert json.loads(unknown.stdout)["preflight"] == "scope_no_match"
+
+    _write_sharing(tide_corpus_repo, enabled=False)
+    idle = invoke_cli("share", "push", "--changed", repo=tide_corpus_repo, extra_env=_GITHUB_PUSH)
+    assert idle.exit_code == 0, idle.stdout
+    assert "No enabled sharing target" in idle.stdout
+    assert _Persistent.events == []
+
+    path = tide_corpus_repo / ".opentide" / "configurations" / "sharing.toml"
+    path.write_text('[[misp]]\nname = "lab"\n', encoding="utf-8")
+    invalid = invoke_cli("share", "push", "--changed", repo=tide_corpus_repo, extra_env=_OUTSIDE_CI)
+    assert json.loads(invalid.stdout)["preflight"] == "sharing_config"
+
+
+def test_changed_uses_the_production_diff(
+    invoke_cli, tide_corpus_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("MISP_LAB_KEY", KEY)
+    monkeypatch.setattr("opentide.sharing.engine.PyMispClient", _Persistent)
+    _write_sharing(tide_corpus_repo)
+    nested = tide_corpus_repo / "objects" / "objectives" / "nested" / "extra.yaml"
+    nested.parent.mkdir(parents=True)
+    nested.write_text("name: Nested\n", encoding="utf-8")
+    seen: list[object] = []
+
+    def _diff(plan: object) -> list[str]:
+        seen.append(plan)
+        return [
+            _OBJECTIVE,
+            "objects/objectives/nested/extra.yaml",
+            "objects/objectives/notes.txt",
+        ]
+
+    monkeypatch.setattr("opentide.deployment.git_repo.diff_calculation", _diff)
+    pushed = invoke_cli("share", "push", "--changed", repo=tide_corpus_repo, extra_env=_GITHUB_PUSH)
+    assert pushed.exit_code == 0, pushed.stdout
+    records = json.loads(pushed.stdout)["records"]
+    assert {record["object_uuid"] for record in records} == {_OBJECTIVE_UUID}
+    assert any(record["action"] == "created" for record in records)
+    assert len(_Persistent.events) == 1
+    assert seen
+
+    _Persistent.events = []
+
+    def _empty(_plan: object) -> list[str]:
+        return []
+
+    monkeypatch.setattr("opentide.deployment.git_repo.diff_calculation", _empty)
+    empty = invoke_cli("share", "push", "--changed", repo=tide_corpus_repo, extra_env=_GITHUB_PUSH)
+    assert empty.exit_code == 0, empty.stdout
+    assert "No changed objects to share" in empty.stdout
+    assert _Persistent.events == []
+    azure = invoke_cli(
+        "share",
+        "push",
+        "--changed",
+        repo=tide_corpus_repo,
+        extra_env={"TF_BUILD": "True", "BUILD_REASON": "IndividualCI"},
+    )
+    assert azure.exit_code == 0, azure.stdout
+    assert "No changed objects to share" in azure.stdout
+    gitlab = invoke_cli(
+        "share",
+        "push",
+        "--changed",
+        repo=tide_corpus_repo,
+        extra_env={"CI_PIPELINE_SOURCE": "push"},
+    )
+    assert gitlab.exit_code == 0, gitlab.stdout
+    assert "No changed objects to share" in gitlab.stdout
+
+    monkeypatch.setattr("opentide.deployment.git_repo.diff_calculation", _diff)
+    narrowed = invoke_cli(
+        "share",
+        "push",
+        "--changed",
+        "--type",
+        "rule",
+        repo=tide_corpus_repo,
+        extra_env=_GITHUB_PUSH,
+    )
+    assert narrowed.exit_code == 0, narrowed.stdout
+    assert "No changed objects to share" in narrowed.stdout
+    assert _Persistent.events == []
+
+    def _boom(_plan: object) -> list[str]:
+        raise Exception("Could not find git commit abc")
+
+    monkeypatch.setattr("opentide.deployment.git_repo.diff_calculation", _boom)
+    missing = invoke_cli(
+        "share", "push", "--changed", repo=tide_corpus_repo, extra_env=_GITHUB_PUSH
+    )
+    assert missing.exit_code == 1, missing.stdout
+    body = json.loads(missing.stdout)
+    assert body["preflight"] == "changed_diff"
+    assert "Could not find git commit abc" in body["message"]
+    assert _Persistent.events == []
+
+
+def test_changed_path_filter_keeps_direct_yaml_children(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from opentide.cli.services.share import (
+        _PREFLIGHT,
+        _changed_files,
+        _direct_object_files,
+        _intersect_changed,
+    )
+    from opentide.sharing.engine import ShareFilters
+
+    objective = tmp_path / "objects" / "objectives"
+    objective.mkdir(parents=True)
+    good = objective / "one.yaml"
+    good.write_text(
+        "metadata:\n  uuid: 00000000-0000-4000-8002-000000000001\n  schema: objective::1.0\n",
+        encoding="utf-8",
+    )
+    nested = objective / "nested" / "two.yml"
+    nested.parent.mkdir()
+    nested.write_text("metadata:\n  uuid: 00000000-0000-4000-8002-000000000002\n", encoding="utf-8")
+    (objective / "notes.txt").write_text("skip", encoding="utf-8")
+    changed = [
+        "objects/objectives/one.yaml",
+        good,
+        "objects/objectives/nested/two.yml",
+        "objects/objectives/notes.txt",
+        "objects/objectives/missing.yaml",
+        "",
+        3,
+    ]
+    selected = _direct_object_files(tmp_path, changed)
+    assert selected == [good.resolve()]
+    assert _direct_object_files(tmp_path, "objects/objectives/one.yaml") == []
+
+    other = ShareFilters(uuids=frozenset({"00000000-0000-4000-8002-000000000099"}))
+    assert _intersect_changed(tmp_path, selected, other) == []
+    same = ShareFilters(uuids=frozenset({"00000000-0000-4000-8002-000000000001"}))
+    assert _intersect_changed(tmp_path, selected, same) == selected
+    files = ShareFilters(files=frozenset({tmp_path / "elsewhere.yaml"}))
+    assert _intersect_changed(tmp_path, selected, files) == []
+
+    real_resolve = Path.resolve
+
+    def _resolve(self: Path, *args: object, **kwargs: object) -> Path:
+        if self.name == "boom.yaml":
+            raise OSError("unreadable")
+        return real_resolve(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", _resolve)
+    assert _direct_object_files(tmp_path, ["objects/objectives/boom.yaml"]) == []
+
+    real_read = Path.read_bytes
+
+    def _read(self: Path, *args: object, **kwargs: object) -> bytes:
+        if self.name == "one.yaml":
+            raise OSError("unreadable")
+        return real_read(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_bytes", _read)
+    assert _intersect_changed(tmp_path, [good.resolve()], same) == []
+
+    def _blank(_plan: object) -> list[str]:
+        raise Exception("   ")
+
+    monkeypatch.setattr("opentide.deployment.git_repo.diff_calculation", _blank)
+    narrowed, stop = _changed_files(tmp_path, None)
+    assert narrowed is None
+    assert stop == _PREFLIGHT["changed_diff"]

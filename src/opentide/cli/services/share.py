@@ -31,7 +31,16 @@ _PREFLIGHT = {
     "retract_unconfirmed": "Pass --yes to delete the remote event",
     "organisation_uuid_mismatch": "The configured organisation does not match the API key",
     "sharing_config": "sharing.toml failed validation",
+    "changed_outside_ci": (
+        "opentide share push --changed runs only in GitHub Actions, GitLab CI, or Azure Pipelines"
+    ),
+    "changed_on_pull_request": "opentide share push --changed does not run on a pull request",
+    "changed_diff": "Could not calculate the changed objects",
 }
+
+_OBJECT_SUFFIXES = frozenset({".yaml", ".yml"})
+_NO_ENABLED_TARGET = "No enabled sharing target"
+_NO_CHANGED_OBJECTS = "No changed objects to share"
 
 
 def run_share(
@@ -47,6 +56,7 @@ def run_share(
     workers: int = 1,
     delete: bool = False,
     confirmed: bool = False,
+    changed: bool = False,
 ) -> dict[str, Any]:
     """Run one share command and return a CLI payload, including ``_exit_code``."""
     if workers < 1:
@@ -78,12 +88,25 @@ def run_share(
     if mode == "targets":
         return _redact(_targets_payload(config), secrets)
 
+    if changed and mode == "push":
+        problem = _changed_context()
+        if problem is not None:
+            return _redact(_preflight(problem, config), secrets)
+
     effective = "preview" if dry_run and mode == "push" else mode
     selected, problem = _select_blocks(config.blocks, targets)
     if problem is not None or selected is None:
+        if changed and mode == "push" and not targets and problem == "scope_no_match":
+            return _redact(_quiet(_NO_ENABLED_TARGET, config), secrets)
         return _redact(_preflight(problem or "scope_no_match", config), secrets)
     documents = _catalogue()
     filters = _filters(cli.repo, uuids, types, files)
+    if changed and mode == "push":
+        filters, stop = _changed_files(cli.repo, filters)
+        if stop == "empty":
+            return _redact(_quiet(_NO_CHANGED_OBJECTS, config), secrets)
+        if stop is not None:
+            return _redact(_preflight("changed_diff", config, message=stop), secrets)
     validate = _validator(documents) if effective in {"push", "preview"} else None
     outcome = run_misp(
         documents,
@@ -201,6 +224,132 @@ def _select_blocks(
     return enabled, None
 
 
+def _changed_context() -> str | None:
+    """Preflight for ``--changed`` before any git diff or HTTP call.
+
+    Platform order matches :class:`opentide.deployment.ci.CIEnvironment`:
+    Azure, then GitHub, then GitLab.
+    """
+    from opentide.deployment.ci import CIEnvironment
+
+    environment = CIEnvironment().environment
+    platforms = CIEnvironment.CIPlatforms
+    if environment is platforms.AzurePipeline:
+        if os.getenv("BUILD_REASON") == "PullRequest":
+            return "changed_on_pull_request"
+        return None
+    if environment is platforms.GitHubActions:
+        if os.getenv("GITHUB_EVENT_NAME") in {"pull_request", "pull_request_target"}:
+            return "changed_on_pull_request"
+        return None
+    if environment is platforms.GitlabCI:
+        if os.getenv("CI_PIPELINE_SOURCE") == "merge_request_event":
+            return "changed_on_pull_request"
+        return None
+    return "changed_outside_ci"
+
+
+def _changed_files(
+    workspace: Path, filters: ShareFilters | None
+) -> tuple[ShareFilters | None, str | None]:
+    """Narrow *filters* to the production diff.
+
+    The second value is ``None`` when *filters* is ready, ``"empty"`` when the
+    diff selects nothing, or the diff error text.
+    """
+    from opentide.deployment.git_repo import diff_calculation
+    from opentide.models.deployment_enums import DeploymentStrategy
+
+    try:
+        changed = diff_calculation(DeploymentStrategy.PRODUCTION)
+    except Exception as exc:
+        text = str(exc).strip()
+        return None, text or _PREFLIGHT["changed_diff"]
+    paths = _direct_object_files(workspace, changed)
+    paths = _intersect_changed(workspace, paths, filters)
+    if not paths:
+        return None, "empty"
+    return (
+        ShareFilters(
+            uuids=None if filters is None else filters.uuids,
+            types=None if filters is None else filters.types,
+            files=frozenset(paths),
+        ),
+        None,
+    )
+
+
+def _object_directories(workspace: Path) -> dict[str, Path]:
+    from opentide.registry.paths import resolve_workspace_paths
+
+    resolved = resolve_workspace_paths(workspace=workspace)
+    found: dict[str, Path] = {}
+    for key in ("threat", "objective", "rule"):
+        path = resolved.get(key)
+        if isinstance(path, Path):
+            found[key] = path.resolve()
+    return found
+
+
+def _direct_object_files(workspace: Path, changed: object) -> list[Path]:
+    """YAML documents that are direct children of a configured object directory."""
+    if not isinstance(changed, list):
+        return []
+    allowed = set(_object_directories(workspace).values())
+    selected: list[Path] = []
+    seen: set[Path] = set()
+    for raw in changed:
+        if not isinstance(raw, (str, Path)):
+            continue
+        text = os.fspath(raw)
+        if not text:
+            continue
+        path = Path(text)
+        if not path.is_absolute():
+            path = workspace / path
+        try:
+            resolved = path.resolve()
+        except OSError:
+            continue
+        if resolved.suffix.lower() not in _OBJECT_SUFFIXES:
+            continue
+        if resolved.parent not in allowed:
+            continue
+        if not resolved.is_file():
+            continue
+        if resolved in seen:
+            continue
+        seen.add(resolved)
+        selected.append(resolved)
+    return selected
+
+
+def _intersect_changed(
+    workspace: Path, paths: list[Path], filters: ShareFilters | None
+) -> list[Path]:
+    if filters is None:
+        return paths
+    chosen = paths
+    if filters.files is not None:
+        chosen = [path for path in chosen if path in filters.files]
+    if filters.types is not None:
+        directories = _object_directories(workspace)
+        allowed = {directories[name] for name in filters.types if name in directories}
+        chosen = [path for path in chosen if path.parent in allowed]
+    if filters.uuids is not None:
+        wanted = filters.uuids
+        matched: list[Path] = []
+        for path in chosen:
+            try:
+                raw = path.read_bytes()
+            except OSError:
+                continue
+            if load_document(raw, path=path).uuid in wanted:
+                matched.append(path)
+        chosen = matched
+    return chosen
+
+
 def _filters(
     workspace: Path,
     uuids: list[str] | None,
@@ -293,14 +442,30 @@ def _from_run(outcome: ShareRun, config: SharingConfig) -> dict[str, Any]:
     )
 
 
-def _preflight(code: str, config: SharingConfig, outcome: ShareRun | None = None) -> dict[str, Any]:
+def _preflight(
+    code: str,
+    config: SharingConfig,
+    outcome: ShareRun | None = None,
+    *,
+    message: str | None = None,
+) -> dict[str, Any]:
     records = [] if outcome is None else [record.as_dict() for record in outcome.records]
     return _result(
-        _PREFLIGHT.get(code, code),
+        message or _PREFLIGHT.get(code, code),
         exit_code=1,
         status="failed",
         preflight=code,
         records=records,
+        warnings=tuple(issue.message for issue in config.issues if issue.severity == "warning"),
+    )
+
+
+def _quiet(message: str, config: SharingConfig) -> dict[str, Any]:
+    return _result(
+        message,
+        exit_code=0,
+        status="completed",
+        records=[],
         warnings=tuple(issue.message for issue in config.issues if issue.severity == "warning"),
     )
 

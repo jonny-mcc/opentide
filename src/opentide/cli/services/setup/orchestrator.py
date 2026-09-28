@@ -244,6 +244,18 @@ def _print_setup_plan(options: SetupOptions) -> None:
     get_stdout_console().print(table)
 
 
+def _ci_feature_choices(ci: CiPlatform | None) -> list[tuple[str, str]]:
+    """Wizard checkboxes. Explorer pages are only written for GitHub Actions."""
+    choices = [
+        ("Staging deployments on pull requests", "staging"),
+        ("Inflight preview shards", "inflight"),
+        ("Automatic status promotion", "promotion"),
+    ]
+    if ci is CiPlatform.github:
+        choices.append(("Explorer pages", "explorer"))
+    return choices
+
+
 def run_interactive_setup(ctx: CliContext, base_path: Path) -> dict[str, object]:
     """Launch the full interactive setup wizard."""
     from rich.panel import Panel
@@ -279,12 +291,7 @@ def run_interactive_setup(ctx: CliContext, base_path: Path) -> dict[str, object]
         promoting = effective_promotion(base_path).get("enabled") is True
         features = ask_checkbox(
             "CI workflow features",
-            [
-                ("Staging deployments on pull requests", "staging"),
-                ("Inflight preview shards", "inflight"),
-                ("Automatic status promotion", "promotion"),
-                ("Explorer pages", "explorer"),
-            ],
+            _ci_feature_choices(options.ci),
             defaults=("staging", "inflight", *(("promotion",) if promoting else ())),
         )
         options.staging = "staging" in features

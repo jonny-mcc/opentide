@@ -14,6 +14,28 @@ from opentide.cli.services.setup.repo import RepoSetupOptions, run_repo_setup
 
 runner = CliRunner()
 
+# Click deletes a variable when its overlay value is None. On a pull request,
+# GitHub Actions sets these, and `generate inflight` then fetches origin of the
+# Actions checkout. That fetch is not this temp repo and does not return before
+# the runner shuts down. The assertion only needs inflight to exit 0.
+_CI_ENV = (
+    "CI",
+    "GITHUB_ACTIONS",
+    "GITHUB_HEAD_REF",
+    "GITHUB_BASE_REF",
+    "GITHUB_SHA",
+    "GITHUB_WORKSPACE",
+    "GITLAB_CI",
+    "CI_PROJECT_DIR",
+    "TF_BUILD",
+    "BUILD_SOURCEVERSION",
+    "BUILD_SOURCESDIRECTORY",
+    "SYSTEM_PULLREQUEST_SOURCEBRANCH",
+    "SYSTEM_PULLREQUEST_TARGETBRANCHNAME",
+    "DEPLOYMENT_PLAN",
+    "INFLIGHT_PATHS",
+)
+
 _MISSING = "00000000-0000-4000-8002-000000000099"
 _OBJECTIVE = "00000000-0000-4000-8002-000000000001"
 
@@ -73,11 +95,10 @@ def _repo(tmp_path: Path, model: str) -> Path:
 
 
 def _invoke(repo: Path, *args: str):
-    return runner.invoke(
-        app,
-        ["--json", "--repo", str(repo), *args],
-        env={"OPENTIDE_REPO_ROOT": str(repo), "OPENTIDE_TIDE_WORKSPACE": str(repo)},
-    )
+    env = dict.fromkeys(_CI_ENV)
+    env["OPENTIDE_REPO_ROOT"] = str(repo)
+    env["OPENTIDE_TIDE_WORKSPACE"] = str(repo)
+    return runner.invoke(app, ["--json", "--repo", str(repo), *args], env=env)
 
 
 def test_generate_names_a_missing_detection_model(tmp_path: Path) -> None:

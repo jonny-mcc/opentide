@@ -100,7 +100,7 @@ If you generated CI with `opentide setup ci`, regenerate it so `--default-branch
 
 **What changes for authors and scripts**
 
-- `validate --json` names the directory it read under `workspace`. A full run that finds no objects still exits `0`, and its message names that directory ([#294](https://github.com/OpenTideHQ/opentide/issues/294)).
+- `opentide --json validate` names the directory it read under `workspace`. A full run that finds no objects still exits `0`, and its message names that directory ([#294](https://github.com/OpenTideHQ/opentide/issues/294)).
 - `setup mcp --generic` returns its copy-the-file instruction as `advice` instead of `note` ([#292](https://github.com/OpenTideHQ/opentide/issues/292)).
 - SDK: the registry index has a `file_paths` map. `ValidationScope.path_basenames` is removed; a path target matches only the object's own file ([#297](https://github.com/OpenTideHQ/opentide/issues/297)).
 - An unset Splunk `frequency_scheduling` keeps the mode it deployed with before: `current` for a legacy `[setup]` table, `random` for a `[[tenants]]` entry ([#295](https://github.com/OpenTideHQ/opentide/issues/295)).

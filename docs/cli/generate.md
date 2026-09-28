@@ -30,7 +30,7 @@ When run without a subcommand, phases execute in this order:
 | 5 | schemas | `generate schemas` | `.opentide/schemas/*.schema.json`, IDE router |
 | 6 | snippets | `generate snippets` | VS Code snippets from templates |
 
-`extract` is **not** part of the default run — it calls live platform APIs and writes `Imported/` in the working directory. Use `opentide generate extract` explicitly when importing rules.
+`extract` is **not** part of the default run — it calls live platform APIs and writes `Imported/` in the working directory. Use `opentide generate extract sentinel` or `opentide generate extract defender` explicitly when importing rules.
 
 A freshly scaffolded repository (no objects yet) is a valid generate target. Docs and exports write empty artifacts. Snippet conversion requires the YAML templates from the templates phase and fails if a core or enabled-platform template is missing. Snippet prefixes are `tide-threat`, `tide-objective`, `tide-rule`, and `tide-<platform>` for enabled platforms, with `scope: yaml` and tabstops on empty values.
 

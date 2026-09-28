@@ -94,7 +94,7 @@ v0.x: legacy imports warn via `DeprecationWarning`. **v1.0 removes shims.**
 | `Orchestration/generate.py` | `opentide generate` |
 | `Orchestration/document.py` | `opentide generate docs` |
 | (repository onboarding) | `opentide setup` |
-| (CI pipeline files) | `opentide setup ci` |
+| (CI pipeline files) | `opentide setup ci github` |
 
 Query validation: **five platforms only** (no CrowdStrike/HarfangLab).
 

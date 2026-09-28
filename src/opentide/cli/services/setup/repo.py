@@ -97,14 +97,25 @@ def run_repo_setup(options: RepoSetupOptions) -> dict[str, object]:
     target.mkdir(parents=True, exist_ok=True)
     for rel in SCAFFOLD_DIRS:
         (target / rel).mkdir(parents=True, exist_ok=True)
-    _write_readme(target, options)
-    _write_gitignore(target)
+    skipped: list[str] = []
+    readme = target / "README.md"
+    if readme.is_file():
+        skipped.append("README.md")
+    else:
+        _write_readme(target, options)
+    gitignore = target / ".gitignore"
+    if gitignore.is_file():
+        skipped.append(".gitignore")
+    else:
+        _write_gitignore(target)
     platforms = [p.value for p in options.platforms]
     result: dict[str, object] = {
         "message": "Repository scaffold created",
         "path": str(target),
         "platforms": platforms,
     }
+    if skipped:
+        result["skipped"] = skipped
     if options.platforms:
         plat = run_platforms_setup(
             PlatformsSetupOptions(path=target, platforms=options.platforms, yes=options.yes)

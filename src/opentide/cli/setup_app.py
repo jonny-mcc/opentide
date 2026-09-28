@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import click
 import typer
 from rich.markup import escape
+from typer._types import TyperChoice
 
 from opentide.cli.context import CliContext, get_context
 from opentide.cli.enums import CiPlatform, DetectionPlatform, McpHost, SkillTarget
@@ -234,17 +234,19 @@ def _ignored_ci_flag_warnings(
     ]
 
 
-class _CiProvider(click.Choice):
-    """``setup ci`` providers. ``none`` stays on the wizard, not this argument."""
+class _CiProvider(TyperChoice[str]):
+    """``setup ci`` providers. ``none`` stays on the wizard, not this argument.
+
+    Typer vendors Click. A ``click.Choice`` is not a parameter type there, so
+    Click wrapped it as a function parser and the docs harness never saw
+    ``github``, ``gitlab``, and ``azure``.
+    """
 
     def __init__(self) -> None:
         super().__init__(["github", "gitlab", "azure"], case_sensitive=False)
 
-    def convert(self, value: str, param: click.Parameter | None, ctx: click.Context | None) -> str:
-        normalized = value.lower()
-        if normalized not in self.choices:
-            raise typer.BadParameter("Choose github, gitlab, or azure")
-        return normalized
+    def get_invalid_choice_message(self, value: object, ctx: object) -> str:
+        return "Choose github, gitlab, or azure"
 
 
 def _require_scripted_for_json(cli: CliContext, command: str, flags: str) -> None:

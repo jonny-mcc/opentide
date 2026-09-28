@@ -325,3 +325,4 @@ get_chaining(uuid=<rule>)                 → inspect related objects in chainin
 - **Empty results everywhere** — the server likely started with the wrong `OPENTIDE_REPO_ROOT`, or schemas were never generated. See [Configuration](./configuration.md) and run `opentide generate` in the repo.
 - **`validate_query` passes on a query the platform rejects** — the check is structural. Field names, operators, and table names are not resolved; run the query in the tenant to prove it works.
 - **A resource returns `{"error": "… not found"}`** — the UUID is wrong or the object type does not match; confirm with `search`.
+- **`deploy_rule` crashes, or `deployment_status` says an undeployed rule is deployed** — through 0.6.3 an unknown platform raised `KeyError`, and any authoring config counted as deployed. 0.6.4 returns a structured failure for an unknown platform or a platform with no tenants. `deployed` is false when the config has no `external_id` and no tenants.

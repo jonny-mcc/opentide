@@ -38,18 +38,27 @@ def _bash_script(commands: list[str]) -> str:
     return "- script: |\n" + indent(body, 4)
 
 
-def _checkout_step(*, persist_credentials: bool) -> str:
+def _checkout_step(*, persist_credentials: bool, full_history: bool = False) -> str:
     """Azure clones with throwaway credentials unless asked otherwise."""
-    if not persist_credentials:
+    if not persist_credentials and not full_history:
         return ""
-    return "- checkout: self\n  persistCredentials: true\n  fetchDepth: 0\n"
+    lines = ["- checkout: self"]
+    if persist_credentials:
+        lines.append("  persistCredentials: true")
+    if full_history or persist_credentials:
+        lines.append("  fetchDepth: 0")
+    return "\n".join(lines) + "\n"
 
 
 def _job_steps(
-    options: CiRenderOptions, commands: list[str], *, persist_credentials: bool = False
+    options: CiRenderOptions,
+    commands: list[str],
+    *,
+    persist_credentials: bool = False,
+    full_history: bool = False,
 ) -> str:
     return (
-        _checkout_step(persist_credentials=persist_credentials)
+        _checkout_step(persist_credentials=persist_credentials, full_history=full_history)
         + _python_setup(options)
         + "\n"
         + _bash_script(commands)
@@ -115,7 +124,7 @@ def render_azure(options: CiRenderOptions) -> str:
                 "deploy_staging",
                 display_name="Deploy Staging",
                 condition="eq(variables['Build.Reason'], 'PullRequest')",
-                steps=_job_steps(options, staging_deploy_steps(options)),
+                steps=_job_steps(options, staging_deploy_steps(options), full_history=True),
             )
         )
     if options.inflight:
@@ -138,7 +147,7 @@ def render_azure(options: CiRenderOptions) -> str:
             "deploy_production",
             display_name="Deploy Production",
             condition=f"eq(variables['Build.SourceBranch'], 'refs/heads/{branch}')",
-            steps=_job_steps(options, production_deploy_steps(options)),
+            steps=_job_steps(options, production_deploy_steps(options), full_history=True),
         )
     )
 

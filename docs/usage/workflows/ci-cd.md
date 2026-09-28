@@ -26,7 +26,7 @@ opentide setup ci gitlab --yes
 opentide setup ci azure --python-version 3.12 --yes
 ```
 
-`setup ci` discovers enabled platforms from `.opentide/configurations/platforms/` — it does not take `--platform` flags (those belong on `setup platforms` or the parent `opentide setup --platform` callback). Generated pipelines install **`opentide>=`** the version that generated them (`opentide>=0.6.1` from 0.6.1) and set `OPENTIDE_REPO_ROOT` for every job (GitHub workflow `env`, GitLab `variables`, Azure pipeline `variables`). Re-run `opentide setup ci` after you upgrade to raise the floor.
+`setup ci` discovers enabled platforms from `.opentide/configurations/platforms/` — it does not take `--platform` flags (those belong on `setup platforms` or the parent `opentide setup --platform` callback). Generated pipelines install **`opentide>=`** the version that generated them (`opentide>=0.6.1` from 0.6.1) and set `OPENTIDE_REPO_ROOT` for every job (GitHub workflow `env`, GitLab `variables`, Azure pipeline `variables`). Re-run `opentide setup ci github --yes` (or `gitlab` or `azure`) after you upgrade to raise the floor.
 
 <Callout type="info">
 Hand-written examples below pin `pip install 'opentide==0.6.3'` so a pipeline cannot float onto an accidental `0.x.dev…` local build. `opentide setup ci` is the source of truth.

@@ -17,10 +17,14 @@ from opentide.ci.stages import (
 from opentide.ci.text import indent, join_blocks
 
 
-def _setup_steps(options: CiRenderOptions) -> str:
+def _setup_steps(options: CiRenderOptions, *, full_history: bool = False) -> str:
     """Checkout, Python, and pip install — unindented relative to ``steps:``."""
+    if full_history:
+        checkout = "- uses: actions/checkout@v4\n  with:\n    fetch-depth: 0"
+    else:
+        checkout = "- uses: actions/checkout@v4"
     return (
-        "- uses: actions/checkout@v4\n"
+        f"{checkout}\n"
         "- uses: actions/setup-python@v5\n"
         "  with:\n"
         f'    python-version: "{options.python_version}"\n'
@@ -170,7 +174,10 @@ def render_github(options: CiRenderOptions) -> str:
                 name="Deploy Staging",
                 needs="generate",
                 if_cond="github.event_name == 'pull_request'",
-                steps=join_blocks(setup, _run_steps(staging_deploy_steps(options))),
+                steps=join_blocks(
+                    _setup_steps(options, full_history=True),
+                    _run_steps(staging_deploy_steps(options)),
+                ),
             )
         )
 
@@ -190,15 +197,19 @@ def render_github(options: CiRenderOptions) -> str:
             )
         )
 
-    prod_needs = "deploy_staging" if options.staging else "generate"
+    # Staging runs only on pull requests. Production runs on push to the default
+    # branch, so it cannot ``needs`` the staging job: a skipped need skips it too.
     prod_if = f"github.event_name == 'push' && github.ref == format('refs/heads/{branch}')"
     jobs.append(
         _github_job(
             "deploy_production",
             name="Deploy Production",
-            needs=prod_needs,
+            needs="generate",
             if_cond=prod_if,
-            steps=join_blocks(setup, _run_steps(production_deploy_steps(options))),
+            steps=join_blocks(
+                _setup_steps(options, full_history=True),
+                _run_steps(production_deploy_steps(options)),
+            ),
         )
     )
 

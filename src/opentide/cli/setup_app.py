@@ -270,7 +270,11 @@ def _confirm_write(cli: CliContext, target: Path, message: str, *, yes: bool) ->
     if yes:
         return True
     if cli.json_output:
-        emit_error(cli, f"--json cannot prompt for confirmation. Add --yes to write to {target}.")
+        shown = target.as_posix() if isinstance(target, Path) else str(target)
+        emit_error(
+            cli,
+            f"--json cannot prompt for confirmation. Add --yes to write to '{shown}'.",
+        )
     try:
         require_interactive()
     except InteractiveRequiredError as exc:

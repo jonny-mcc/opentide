@@ -274,6 +274,51 @@ def test_non_diff_ci_plan_names_the_plan(
     )
 
 
+def _shallow_clone(tmp_path: Path) -> tuple[Path, str, str]:
+    origin = tmp_path / "origin"
+    origin.mkdir()
+    _init_repo(origin, commits=2)
+    parent = _git(origin, "rev-parse", "HEAD^")
+    head = _git(origin, "rev-parse", "HEAD")
+    clone = tmp_path / "clone"
+    subprocess.run(
+        ["git", "clone", "--depth", "1", "--no-local", "--quiet", str(origin), str(clone)],
+        check=True,
+        capture_output=True,
+    )
+    return clone, head, parent
+
+
+@pytest.mark.parametrize("plan", ["STAGING", "PRODUCTION"])
+def test_shallow_checkout_names_the_missing_parent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_home: Path, plan: str
+) -> None:
+    """#348: a depth-1 clone of two commits crashed with ``b'<parent sha>'``."""
+    del git_home
+    repo, head, parent = _shallow_clone(tmp_path)
+    monkeypatch.chdir(repo)
+    result = runner.invoke(
+        app,
+        ["--json", "deploy", "--dry-run", "--plan", plan],
+        env=_env(
+            repo,
+            GITHUB_ACTIONS="true",
+            GITHUB_WORKSPACE=str(repo),
+            GITHUB_SHA=head,
+        ),
+    )
+    rendered = result.stdout + result.stderr
+    assert result.exit_code == 1, rendered
+    assert f"b'{parent}'" not in rendered
+    assert "Traceback" not in rendered
+    payload = json.loads(result.stdout)
+    if plan == "PRODUCTION":
+        assert payload["message"] == f"Could not find git commit {parent}"
+    else:
+        assert "GITHUB_HEAD_REF" in payload["message"]
+        assert "GITHUB_BASE_REF" in payload["message"]
+
+
 def test_gitlab_merged_result_with_one_parent_keeps_the_tip(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, git_home: Path
 ) -> None:

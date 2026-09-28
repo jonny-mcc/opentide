@@ -61,6 +61,7 @@ def render_gitlab(options: CiRenderOptions) -> str:
             )
         )
 
+    full_history = ["  variables:", '    GIT_DEPTH: "0"']
     deploy_jobs: list[str] = []
     if options.staging:
         deploy_jobs.append(
@@ -71,6 +72,7 @@ def render_gitlab(options: CiRenderOptions) -> str:
                 script=staging_deploy_steps(options),
                 needs="generate",
                 rules='$CI_PIPELINE_SOURCE == "merge_request_event"',
+                extra_lines=full_history,
             )
         )
 
@@ -82,6 +84,7 @@ def render_gitlab(options: CiRenderOptions) -> str:
             script=production_deploy_steps(options),
             needs="generate",
             rules="$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH",
+            extra_lines=full_history,
         )
     )
 

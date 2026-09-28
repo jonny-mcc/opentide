@@ -47,6 +47,14 @@ class ShareLedger:
             parsed.append(_parse_line(line))
         return cls(target, _collapse(parsed))
 
+    def records(self) -> tuple[dict[str, Any], ...]:
+        """Identity lines, last duplicate kept, opaque lines omitted."""
+        found: list[dict[str, Any]] = []
+        for entry in self._entries:
+            if isinstance(entry, dict) and _triple(entry) is not None:
+                found.append(dict(entry))
+        return tuple(found)
+
     def get(self, object_uuid: str, integration: str, target: str) -> dict[str, Any] | None:
         """Return the last line for the triple, including an unknown ``state``."""
         found: dict[str, Any] | None = None

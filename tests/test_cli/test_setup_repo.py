@@ -88,3 +88,18 @@ def test_setup_repo_platform_generate_emits_configuration_stubs(
     assert "configurations: {}" not in text
     assert "#sentinel:" in text
     clear_runtime_caches()
+
+
+def test_setup_repo_keeps_an_edited_readme_and_gitignore(tmp_path: Path) -> None:
+    """#350: re-running setup replaced README and .gitignore and dropped edits."""
+    target = tmp_path / "kept"
+    run_repo_setup(RepoSetupOptions(path=target, name="Kept", yes=True))
+    readme = target / "README.md"
+    gitignore = target / ".gitignore"
+    readme.write_text("# local notes\n", encoding="utf-8")
+    gitignore.write_text("secrets/\n", encoding="utf-8")
+    result = run_repo_setup(RepoSetupOptions(path=target, name="Kept", yes=True))
+    assert readme.read_text(encoding="utf-8") == "# local notes\n"
+    assert gitignore.read_text(encoding="utf-8") == "secrets/\n"
+    assert result["skipped"] == ["README.md", ".gitignore"]
+    assert (target / "objects" / "rules").is_dir()

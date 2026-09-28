@@ -289,6 +289,52 @@ def test_run_ci_setup_gitlab_keeps_ci_default_branch(tmp_path: Path, git_home: P
     assert "trunk" not in rendered and "development" not in rendered
 
 
+def test_explorer_pages_warn_instead_of_writing_a_job(tmp_path: Path) -> None:
+    """#347: GitLab and Azure accepted Explorer pages and wrote no job."""
+    from opentide.cli.services.setup.orchestrator import _ci_feature_choices
+
+    github_keys = [key for _, key in _ci_feature_choices(CiPlatform.github)]
+    assert "explorer" in github_keys
+    for ci in (CiPlatform.gitlab, CiPlatform.azure, CiPlatform.none):
+        assert "explorer" not in [key for _, key in _ci_feature_choices(ci)]
+
+    for ci, filename in (
+        (CiPlatform.gitlab, ".gitlab-ci.yml"),
+        (CiPlatform.azure, "azure-pipelines.yml"),
+    ):
+        target = tmp_path / ci.value
+        result = run_ci_setup(
+            CiSetupOptions(
+                path=target,
+                ci=ci,
+                explorer_pages=True,
+                default_branch="main",
+                yes=True,
+            )
+        )
+        assert f"Explorer pages were not written for {ci.value}" in result["warnings"]
+        rendered = (target / filename).read_text(encoding="utf-8")
+        assert "Build explorer" not in rendered
+        assert "Deploy explorer" not in rendered
+
+    github = tmp_path / "github"
+    written = run_ci_setup(
+        CiSetupOptions(
+            path=github,
+            ci=CiPlatform.github,
+            explorer_pages=True,
+            default_branch="main",
+            yes=True,
+        )
+    )
+    workflow = (github / ".github" / "workflows" / "opentide.yml").read_text(encoding="utf-8")
+    assert "Build explorer" in workflow
+    assert "Deploy explorer" in workflow
+    assert not any(
+        "Explorer pages were not written" in item for item in written.get("warnings", [])
+    )
+
+
 def test_run_ci_setup_rejects_a_branch_it_cannot_render(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match="Invalid default branch name"):
         run_ci_setup(

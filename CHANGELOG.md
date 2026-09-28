@@ -6,6 +6,30 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+## [0.6.4] — 2026-09-28
+
+Patch on 0.6.3. Upgrade if `generate` printed an empty error for a missing detection model, a GitHub production deploy never ran, setup rewrote a README or platform comments, or MCP `deploy_rule` crashed. Regenerate a GitHub, GitLab, or Azure workflow with `opentide setup ci` so production deploy and the checkout depth match this release.
+
+### Fixed
+
+- `generate` exits `1` with one JSON document whose `message` names the missing UUID and `detection_model`. 0.6.3 printed empty stdout and a traceback that ended in a bare `Exception`. A catalogue that contains the objective still completes, and `generate inflight` on the broken tree still exits `0` ([#352](https://github.com/OpenTideHQ/opentide/issues/352)).
+- MCP `deploy_rule` returns a structured failure for an unknown platform and for a platform with no tenants, instead of `KeyError` or `TypeError`. `deployment_status` reports `deployed: false` when the authoring config has no `external_id` and no tenants ([#345](https://github.com/OpenTideHQ/opentide/issues/345)).
+- `--json setup` quotes the path it would write. A target of `.` no longer reads as `..` ([#346](https://github.com/OpenTideHQ/opentide/issues/346)).
+- Explorer pages are offered only for GitHub. GitLab and Azure exit `0` and warn that Explorer pages were not written, instead of writing no job and no warning ([#347](https://github.com/OpenTideHQ/opentide/issues/347)).
+- A generated GitHub production deploy needs `generate`, so a push to the default branch still deploys when the pull-request staging job is skipped. GitHub, GitLab, and Azure deploy jobs fetch full history. A missing parent commit is named instead of a bare SHA ([#348](https://github.com/OpenTideHQ/opentide/issues/348)).
+- `setup --yes --ci none` scaffolds the repository and writes no pipeline. `setup ci none` is rejected. CI-only flags without `github`, `gitlab`, or `azure` are named in warnings ([#349](https://github.com/OpenTideHQ/opentide/issues/349)).
+- Re-running setup keeps an edited `README.md`, `.gitignore`, and comments in an existing platform toml. The first scaffold still creates those files. `setup ci` still replaces the workflow ([#350](https://github.com/OpenTideHQ/opentide/issues/350)).
+- `lint --fix` rewrites a metadata finding onto the path it just renamed. A second `--fix` does not rename that file again ([#353](https://github.com/OpenTideHQ/opentide/issues/353)).
+- Usage and CLI pages no longer tell the reader to run a command that exits `2` ([#354](https://github.com/OpenTideHQ/opentide/issues/354)).
+
+### Install
+
+```bash
+pip install opentide==0.6.4
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
 ## [0.6.3] — 2026-09-24
 
 Patch on 0.6.2. Upgrade if a CI diff plan still crashed after 0.6.2: a missing tip SHA died on `encode`, Azure `STAGING` died on `KeyError` or a fetch of a missing `origin`, a ref that is not on `origin` died on `Invalid object name`, or `DEBUG`, `MANUAL`, or `ALWAYS` died on `KeyError`. Each still exits `1`, with the sentence for that case. `FULL` is unchanged.
@@ -478,7 +502,8 @@ export OPENTIDE_REPO_ROOT=/path/to/detection-repo
 opentide validate --strict
 ```
 
-[Unreleased]: https://github.com/OpenTideHQ/opentide/compare/v0.6.3...HEAD
+[Unreleased]: https://github.com/OpenTideHQ/opentide/compare/v0.6.4...HEAD
+[0.6.4]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.6.4
 [0.6.3]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.6.3
 [0.6.2]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.6.2
 [0.6.1]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.6.1

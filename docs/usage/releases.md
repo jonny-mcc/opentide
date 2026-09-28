@@ -7,6 +7,35 @@ description: Public package versions of the OpenTide DetectionOps engine on PyPI
 
 The engine is the [`opentide`](https://pypi.org/project/opentide/) package. Pin a version in CI. Source of truth for notes is [`CHANGELOG.md`](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md) in the repository; GitHub Releases are tagged `v*` and publish to PyPI.
 
+## 0.6.4 — 28 September 2026
+
+Patch on 0.6.3. **Upgrade if `generate` printed an empty error for a missing detection model, a GitHub production deploy never ran, setup rewrote a README or platform comments, or MCP `deploy_rule` crashed.** Regenerate a workflow with `opentide setup ci github` (or `gitlab` or `azure`) so production deploy and the checkout depth match this release.
+
+**Install**
+
+```bash
+pip install opentide==0.6.4
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+**What changes for authors and scripts**
+
+- `generate` exits `1` with a JSON `message` that names the missing `detection_model` UUID, instead of empty stdout ([#352](https://github.com/OpenTideHQ/opentide/issues/352)).
+- MCP `deploy_rule` returns a structured failure for an unknown platform or a platform with no tenants. `deployment_status` is `deployed: false` when the config has no `external_id` and no tenants ([#345](https://github.com/OpenTideHQ/opentide/issues/345)).
+- `--json setup` quotes the path it would write ([#346](https://github.com/OpenTideHQ/opentide/issues/346)).
+- Explorer pages are offered only for GitHub. GitLab and Azure warn and write no Explorer job ([#347](https://github.com/OpenTideHQ/opentide/issues/347)).
+- GitHub production deploy needs `generate`, so a push to the default branch still deploys. Deploy jobs fetch full history ([#348](https://github.com/OpenTideHQ/opentide/issues/348)).
+- `setup --yes --ci none` scaffolds the repository and writes no pipeline ([#349](https://github.com/OpenTideHQ/opentide/issues/349)).
+- Re-running setup keeps an edited README, `.gitignore`, and platform comments ([#350](https://github.com/OpenTideHQ/opentide/issues/350)).
+- `lint --fix` reports metadata on the renamed path ([#353](https://github.com/OpenTideHQ/opentide/issues/353)).
+
+**Links**
+
+- [PyPI](https://pypi.org/project/opentide/0.6.4/)
+- [GitHub Release](https://github.com/OpenTideHQ/opentide/releases/tag/v0.6.4)
+- [CHANGELOG](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md)
+
 ## 0.6.3 — 24 September 2026
 
 Patch on 0.6.2. **Upgrade if a CI diff plan still crashed after 0.6.2** with `encode`, `KeyError`, `Invalid object name`, or `list index out of range`. Each of those cases still exits `1`, with a sentence instead of the exception. `FULL` is unchanged.

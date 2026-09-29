@@ -194,7 +194,7 @@ def github_inflight_prune_job(
     )
     install = pip_install(opts)
     prune_cmd = inflight_prune_steps(opts)[0]
-    prod_if = f"github.event_name == 'push' && github.ref == format('refs/heads/{default_branch}')"
+    prod_if = f"github.event_name == 'push' && github.ref == 'refs/heads/{default_branch}'"
     commit_push = textwrap.indent(
         _commit_and_push(
             message="ci: prune inflight preview shards [skip ci]",

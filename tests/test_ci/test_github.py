@@ -21,6 +21,8 @@ def test_render_github_includes_core_jobs() -> None:
     assert "document:" in workflow
     assert "branches:" in workflow
     assert "- development" in workflow
+    assert "github.ref == 'refs/heads/development'" in workflow
+    assert "format(" not in workflow
 
 
 def test_render_github_validate_includes_query_platforms() -> None:

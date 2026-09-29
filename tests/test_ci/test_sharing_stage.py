@@ -39,8 +39,8 @@ def test_github_share_job_follows_generate_and_not_deploy() -> None:
     assert share["needs"] == "generate"
     assert jobs["deploy_production"]["needs"] == "generate"
     assert "share" not in str(jobs["deploy_production"]["needs"])
-    assert "github.event_name == 'push'" in share["if"]
-    assert "refs/heads/main" in share["if"]
+    assert share["if"] == "github.event_name == 'push' && github.ref == 'refs/heads/main'"
+    assert "format(" not in text
     checkout = next(
         step for step in share["steps"] if str(step.get("uses", "")).startswith("actions/checkout")
     )

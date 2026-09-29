@@ -138,7 +138,7 @@ def _explorer_jobs(branch: str, python_version: str) -> list[str]:
           name: Deploy explorer to GitHub Pages
           runs-on: ubuntu-latest
           needs: explorer
-          if: github.event_name == 'push' && github.ref == format('refs/heads/{branch}')
+          if: github.event_name == 'push' && github.ref == 'refs/heads/{branch}'
           permissions:
             pages: write
             id-token: write
@@ -171,7 +171,7 @@ def render_github(options: CiRenderOptions) -> str:
         _github_job("generate", name="Generate", needs="validate", steps=generate_steps),
     ]
 
-    prod_if = f"github.event_name == 'push' && github.ref == format('refs/heads/{branch}')"
+    prod_if = f"github.event_name == 'push' && github.ref == 'refs/heads/{branch}'"
     if options.sharing:
         jobs.append(
             _github_job(

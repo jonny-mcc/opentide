@@ -140,7 +140,9 @@ def malapi_module(tmp_path_factory):
     mock_opentide.Configurations = mock_configs
 
     try:
-        with patch.dict("sys.modules", {"opentide.core.registry": MagicMock(OpenTide=mock_opentide)}):
+        with patch.dict(
+            "sys.modules", {"opentide.core.registry": MagicMock(OpenTide=mock_opentide)}
+        ):
             import opentide.extraction.malapi as malapi
 
             malapi.VOCAB_FILE_PATH = export_path

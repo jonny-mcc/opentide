@@ -84,6 +84,7 @@ def _write_gitignore(target: Path) -> None:
                 "*.egg-info/",
                 ".pytest_cache/",
                 f"{OPENTIDE_DIR}/exports/*.export.json",
+                f"{OPENTIDE_DIR}/states/",
             ]
         )
         + "\n",

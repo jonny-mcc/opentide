@@ -130,6 +130,41 @@ def test_client_delete_rule() -> None:
     )
 
 
+def test_client_export_rules_all_uses_bulk_action() -> None:
+    client = ElasticSecurityClient("https://kibana.example.com:5601", "secret-key")
+    mock_resp = MagicMock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"name":"rule-1"}\n{"exported_count":1}\n'
+
+    with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+        result = client.export_rules()
+
+    assert result == b'{"name":"rule-1"}\n{"exported_count":1}\n'
+    mock_post.assert_called_once_with(
+        "https://kibana.example.com:5601/api/detection_engine/rules/_bulk_action",
+        json={"action": "export", "query": ""},
+        timeout=30,
+    )
+
+
+def test_client_export_rules_by_ids_uses_objects() -> None:
+    client = ElasticSecurityClient("https://kibana.example.com:5601", "secret-key")
+    mock_resp = MagicMock(spec=requests.Response)
+    mock_resp.status_code = 200
+    mock_resp.content = b'{"name":"rule-1"}\n'
+
+    with patch.object(client.session, "post", return_value=mock_resp) as mock_post:
+        result = client.export_rules(rule_ids=["rule-1", "rule-2"])
+
+    assert result == b'{"name":"rule-1"}\n'
+    mock_post.assert_called_once_with(
+        "https://kibana.example.com:5601/api/detection_engine/rules/_export",
+        params={"exclude_export_details": "true"},
+        json={"objects": [{"rule_id": "rule-1"}, {"rule_id": "rule-2"}]},
+        timeout=30,
+    )
+
+
 def test_deployer_active_rules() -> None:
     tenant = _tenant()
     deployer = ElasticSecurityDeploy()

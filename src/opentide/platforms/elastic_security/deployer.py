@@ -40,6 +40,23 @@ class ElasticSecurityDeploy:
         rules_to_import: list[dict[str, Any]] = []
         ndjson_lines: list[str] = []
 
+        existing_rule_ids: set[str] | None = None
+        try:
+            raw_export = client.export_rules()
+            if isinstance(raw_export, (bytes, str)):
+                text = raw_export.decode("utf-8") if isinstance(raw_export, bytes) else raw_export
+                existing_rule_ids = set()
+                for line in text.splitlines():
+                    if line.strip():
+                        try:
+                            obj = json.loads(line)
+                            if isinstance(obj, dict) and "rule_id" in obj:
+                                existing_rule_ids.add(str(obj["rule_id"]))
+                        except Exception:
+                            pass
+        except Exception:
+            existing_rule_ids = None
+
         for rule in batch.rules:
             cfg = getattr(rule.configurations, "elastic_security", None)
             if not cfg:
@@ -50,6 +67,8 @@ class ElasticSecurityDeploy:
             strategy = check_status(status_override)
 
             if strategy is StatusStrategy.DELETION:
+                if existing_rule_ids is not None and rule_id not in existing_rule_ids:
+                    continue
                 logger.info("deleting_elastic_security_rule", rule_id=rule_id, name=rule.name)
                 try:
                     client.delete_rule(rule_id)
@@ -71,17 +90,28 @@ class ElasticSecurityDeploy:
                 continue
 
             if strategy is StatusStrategy.DISABLEMENT:
-                logger.info("disabling_elastic_security_rule", rule_id=rule_id, name=rule.name)
-                try:
-                    client.patch_rule({"rule_id": rule_id, "enabled": False})
-                except Exception as exc:
-                    logger.error(
-                        "disable_elastic_security_rule_failed",
-                        rule_id=rule_id,
-                        error=str(exc),
-                    )
-                    raise
-                continue
+                if existing_rule_ids is not None and rule_id not in existing_rule_ids:
+                    # Rule not on cluster; fall through to compile and import with enabled: False
+                    pass
+                else:
+                    logger.info("disabling_elastic_security_rule", rule_id=rule_id, name=rule.name)
+                    try:
+                        client.patch_rule({"rule_id": rule_id, "enabled": False})
+                        continue
+                    except Exception as exc:
+                        status_code = getattr(getattr(exc, "response", None), "status_code", None)
+                        if status_code == 404:
+                            logger.info(
+                                "disable_elastic_security_rule_not_found_will_import",
+                                rule_id=rule_id,
+                            )
+                        else:
+                            logger.error(
+                                "disable_elastic_security_rule_failed",
+                                rule_id=rule_id,
+                                error=str(exc),
+                            )
+                            raise
 
             # Active deployment: compile and respect rule/cfg enabled setting
             # Bundle any inline/referenced exception lists first into the import NDJSON
@@ -110,35 +140,74 @@ class ElasticSecurityDeploy:
             ndjson_lines.append(json.dumps(compiled, sort_keys=True))
 
         if rules_to_import or ndjson_lines:
-            ndjson_payload = "\n".join(ndjson_lines)
             logger.info(
                 "importing_elastic_security_rules",
                 count=len(rules_to_import),
                 tenant=tenant_config.name,
             )
-            resp = client.import_rules(
-                ndjson_payload,
-                overwrite=True,
-                overwrite_exceptions=getattr(tenant_config.setup, "overwrite_exceptions", False),
-                overwrite_action_connectors=getattr(
-                    tenant_config.setup, "overwrite_action_connectors", False
-                ),
-            )
-            # Inspect import response: success: false, errors[], success_count
-            if isinstance(resp, dict):
-                errors = resp.get("errors", [])
-                success = resp.get("success", True)
-                if errors or not success:
-                    error_details = []
-                    for err in errors:
-                        rid = err.get("rule_id") or err.get("id") or "unknown"
-                        msg = err.get("error", {}).get("message") or err.get("message") or str(err)
-                        error_details.append(f"rule '{rid}': {msg}")
-                    error_summary = (
-                        "; ".join(error_details) if error_details else "Import reported failure"
-                    )
-                    logger.error("import_elastic_security_rules_failed", errors=errors)
-                    raise RuntimeError(f"Elastic Security rule import failed: {error_summary}")
+            batch_size = 50
+            all_errors: list[dict[str, Any]] = []
+            for i in range(0, len(ndjson_lines), batch_size):
+                chunk = ndjson_lines[i : i + batch_size]
+                ndjson_payload = "\n".join(chunk)
+                resp = client.import_rules(
+                    ndjson_payload,
+                    overwrite=True,
+                    overwrite_exceptions=getattr(tenant_config.setup, "overwrite_exceptions", False),
+                    overwrite_action_connectors=getattr(
+                        tenant_config.setup, "overwrite_action_connectors", False
+                    ),
+                )
+                if isinstance(resp, dict):
+                    errors = resp.get("errors", [])
+                    success = resp.get("success", True)
+                    if errors or not success:
+                        all_errors.extend(errors)
+
+            if all_errors:
+                still_failing: list[dict[str, Any]] = []
+                retry_lines: dict[str, str] = {}
+                for line in ndjson_lines:
+                    if line.strip():
+                        try:
+                            parsed = json.loads(line)
+                            if isinstance(parsed, dict) and "rule_id" in parsed:
+                                retry_lines[str(parsed["rule_id"])] = line
+                        except Exception:
+                            pass
+
+                for err in all_errors:
+                    rid = str(err.get("rule_id") or err.get("id") or "")
+                    if rid and rid in retry_lines:
+                        try:
+                            retry_resp = client.import_rules(
+                                retry_lines[rid],
+                                overwrite=True,
+                                overwrite_exceptions=getattr(
+                                    tenant_config.setup, "overwrite_exceptions", False
+                                ),
+                                overwrite_action_connectors=getattr(
+                                    tenant_config.setup, "overwrite_action_connectors", False
+                                ),
+                            )
+                            if isinstance(retry_resp, dict) and not retry_resp.get("errors"):
+                                continue
+                        except Exception:
+                            pass
+                    still_failing.append(err)
+                all_errors = still_failing
+
+            if all_errors:
+                error_details = []
+                for err in all_errors:
+                    rid = err.get("rule_id") or err.get("id") or "unknown"
+                    msg = err.get("error", {}).get("message") or err.get("message") or str(err)
+                    error_details.append(f"rule '{rid}': {msg}")
+                error_summary = (
+                    "; ".join(error_details) if error_details else "Import reported failure"
+                )
+                logger.error("import_elastic_security_rules_failed", errors=all_errors)
+                raise RuntimeError(f"Elastic Security rule import failed: {error_summary}")
 
     def deploy(
         self,

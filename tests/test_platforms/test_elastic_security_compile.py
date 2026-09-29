@@ -454,3 +454,69 @@ def test_roundtrip_all_eight_rule_types(rule_type: str, type_fields: dict) -> No
             assert compiled[k] == v, (
                 f"Field '{k}' value mismatch in compiled rule of type '{rule_type}'"
             )
+
+
+def test_alert_suppression_group_by_allowed_on_query_and_esql() -> None:
+    for rule_type, query_field in [
+        ("query", {"query": "process.name: *", "language": "kuery", "index": ["logs-*"]}),
+        ("esql", {"query": "FROM logs-* | WHERE process.name IS NOT NULL", "language": "esql"}),
+    ]:
+        rule_data = {
+            "name": f"Suppression Test {rule_type}",
+            "description": "testing suppression group_by",
+            "metadata": {
+                "uuid": f"00000000-0000-4000-8003-00000000009{rule_type[0]}",
+                "schema": "rule::1.0",
+                "version": 1,
+                "created": "2026-01-01",
+                "modified": "2026-01-02",
+                "tlp": "amber",
+            },
+            "status": "PRODUCTION",
+            "configurations": {
+                "elastic_security": {
+                    "schema": "platform::elastic_security::1.0",
+                    "type": rule_type,
+                    **query_field,
+                    "alert_suppression": {
+                        "group_by": ["host.name", "user.name"],
+                        "duration": {"value": 1, "unit": "h"},
+                    },
+                }
+            },
+        }
+        rule = load_rule_from_dict(rule_data)
+        compiled = compile_rule(rule)
+        assert compiled["alert_suppression"]["group_by"] == ["host.name", "user.name"]
+
+
+def test_alert_suppression_group_by_rejected_on_threshold() -> None:
+    rule_data = {
+        "name": "Threshold Suppression Test",
+        "description": "testing threshold suppression group_by rejection",
+        "metadata": {
+            "uuid": "00000000-0000-4000-8003-000000000099",
+            "schema": "rule::1.0",
+            "version": 1,
+            "created": "2026-01-01",
+            "modified": "2026-01-02",
+            "tlp": "amber",
+        },
+        "status": "PRODUCTION",
+        "configurations": {
+            "elastic_security": {
+                "schema": "platform::elastic_security::1.0",
+                "type": "threshold",
+                "query": "event.category: authentication",
+                "language": "kuery",
+                "index": ["logs-*"],
+                "threshold": {"field": ["user.name"], "value": 5},
+                "alert_suppression": {
+                    "group_by": ["user.name"],
+                    "duration": {"value": 1, "unit": "h"},
+                },
+            }
+        },
+    }
+    with pytest.raises(ValueError, match="threshold rules with alert_suppression do not allow 'group_by'"):
+        load_rule_from_dict(rule_data)

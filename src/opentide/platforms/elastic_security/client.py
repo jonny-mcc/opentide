@@ -111,12 +111,17 @@ class ElasticSecurityClient:
         exclude_export_details: bool = True,
     ) -> bytes:
         """Export detection rules as NDJSON."""
-        url = self._url("/api/detection_engine/rules/_export")
-        params = {"exclude_export_details": str(exclude_export_details).lower()}
-        body: dict[str, Any] = {"objects": []}
         if rule_ids:
-            body["objects"] = [{"rule_id": rid} for rid in rule_ids]
-        resp = self.session.post(url, params=params, json=body, timeout=self.timeout)
+            url = self._url("/api/detection_engine/rules/_export")
+            params = {"exclude_export_details": str(exclude_export_details).lower()}
+            body: dict[str, Any] = {"objects": [{"rule_id": rid} for rid in rule_ids]}
+            resp = self.session.post(url, params=params, json=body, timeout=self.timeout)
+            resp.raise_for_status()
+            return resp.content
+
+        url = self._url("/api/detection_engine/rules/_bulk_action")
+        body = {"action": "export", "query": ""}
+        resp = self.session.post(url, json=body, timeout=self.timeout)
         resp.raise_for_status()
         return resp.content
 

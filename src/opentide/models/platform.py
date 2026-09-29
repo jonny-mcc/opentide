@@ -324,13 +324,11 @@ class ElasticSecurityConfig(PlatformConfigBase):
             if self.language is not None and self.language not in ("kuery", "lucene"):
                 raise ValueError(f"{rule_type} rules must use language 'kuery' or 'lucene'")
 
-        if rule_type == "threshold" and self.threshold is None:
-            raise ValueError("threshold rules require 'threshold' configuration (field and value)")
-        if self.alert_suppression is not None:
-            if self.alert_suppression.group_by:
+        if rule_type == "threshold":
+            if self.threshold is None:
+                raise ValueError("threshold rules require 'threshold' configuration (field and value)")
+            if self.alert_suppression is not None and self.alert_suppression.group_by:
                 raise ValueError("threshold rules with alert_suppression do not allow 'group_by'")
-            if not self.alert_suppression.duration:
-                raise ValueError("threshold rules with alert_suppression require 'duration'")
 
         elif rule_type == "threat_match":
             if not self.threat_index:
@@ -350,6 +348,9 @@ class ElasticSecurityConfig(PlatformConfigBase):
                 raise ValueError("new_terms rules require 'new_terms_fields'")
             if not self.history_window_start:
                 raise ValueError("new_terms rules require 'history_window_start'")
+
+        if self.alert_suppression is not None and not self.alert_suppression.duration:
+            raise ValueError("alert_suppression requires 'duration'")
 
         return self
 

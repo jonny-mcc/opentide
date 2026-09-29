@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from opentide.generation.framework import get_vocab_entry, techniques_resolver
+from opentide.generation.framework import get_type, get_vocab_entry, techniques_resolver
 from opentide.models.rule import DetectionRule
 
 # Static mapping for the 14 MITRE Enterprise ATT&CK tactics
@@ -102,7 +102,7 @@ def resolve_elastic_threat(data: DetectionRule) -> list[dict[str, Any]]:
 
     uuid = data.metadata.uuid if data.metadata else ""
     raw_techniques: list[str] = []
-    if uuid:
+    if uuid and get_type(uuid, mute=True) is not None:
         try:
             raw_techniques = techniques_resolver(uuid)
         except Exception:

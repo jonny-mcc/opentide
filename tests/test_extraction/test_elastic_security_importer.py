@@ -111,6 +111,13 @@ def test_render_rule_doc() -> None:
     assert config["query"] == "process.name: powershell.exe and process.args: -enc"
     assert config["index"] == ["logs-endpoint.events.*"]
     assert config["tenants"] == ["primary"]
+    assert config["threat"] == rule["threat"]
+    assert config["enabled"] is True
+
+    rule_disabled = dict(rule, enabled=False)
+    _, _, doc_disabled = render_rule_doc(rule_disabled, "primary")
+    assert doc_disabled["configurations"]["elastic_security"]["enabled"] is False
+    assert doc_disabled["status"] == "DISABLED"
 
 
 def test_import_rules_from_ndjson_filtering_and_collision(tmp_path: Path) -> None:
@@ -141,11 +148,19 @@ def test_import_rules_from_ndjson_filtering_and_collision(tmp_path: Path) -> Non
     }
 
     ndjson_data = "\n".join([json.dumps(r) for r in [rule1, rule_prebuilt, rule2]])
-    paths = import_rules_from_ndjson(ndjson_data, tenant_name="test_tenant", destination=tmp_path)
+    paths = import_rules_from_ndjson(
+        ndjson_data, tenant_name="test_tenant", destination=tmp_path, include_prebuilt=False
+    )
 
     assert len(paths) == 2
-    # Verify prebuilt was skipped
+    # Verify prebuilt was skipped when include_prebuilt=False
     assert not (tmp_path / "Prebuilt Rule.yaml").exists()
+
+    # Verify prebuilt is included by default
+    dest_all = tmp_path / "all"
+    paths_all = import_rules_from_ndjson(ndjson_data, tenant_name="test_tenant", destination=dest_all)
+    assert len(paths_all) == 3
+    assert (dest_all / "Prebuilt Rule.yaml").exists()
 
     # Verify rule1 took the base name
     file1 = tmp_path / "Duplicate Name Rule.yaml"
@@ -306,8 +321,14 @@ def test_import_elastic_security_importer_real_client_mock_http(tmp_path: Path) 
             rule_data = yaml.safe_load(rule_file.read_text(encoding="utf-8"))
             assert rule_data["metadata"]["uuid"] == "custom-rule-1"
 
-            # Prebuilt rule was NOT written
-            assert not (tmp_path / "Prebuilt Elastic Rule.yaml").exists()
+            # Prebuilt rule is included by default
+            assert (tmp_path / "Prebuilt Elastic Rule.yaml").exists()
+
+            # Prebuilt rule is skipped with include_prebuilt=False
+            dest_custom = tmp_path / "custom_only"
+            import_elastic_security_rules(destination=dest_custom, include_prebuilt=False)
+            assert (dest_custom / "Custom Rule 1.yaml").exists()
+            assert not (dest_custom / "Prebuilt Elastic Rule.yaml").exists()
 
             # Exception list container + item file was written
             exc_file = tmp_path / "elastic_security_exception_lists.yaml"

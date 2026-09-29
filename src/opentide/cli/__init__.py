@@ -332,9 +332,16 @@ def generate_extract_elastic_security(
     ctx: typer.Context,
     tenant: str | None = typer.Option(None, "--tenant", "-t", help="Tenant name to import from"),
     space: str | None = typer.Option(None, "--space", "-s", help="Kibana space to import from"),
+    include_prebuilt: bool = typer.Option(
+        True,
+        "--include-prebuilt/--custom-only",
+        help="Include prebuilt and immutable Elastic rules (default: include)",
+    ),
 ) -> None:
     """Import Elastic Security detection rules (needs tenant credentials)."""
-    kwargs: dict[str, object] = {}
+    kwargs: dict[str, object] = {
+        "include_prebuilt": include_prebuilt,
+    }
     if tenant is not None:
         kwargs["tenant"] = tenant
     if space is not None:
@@ -587,10 +594,17 @@ def import_elastic_security(
     ctx: typer.Context,
     tenant: str | None = typer.Option(None, "--tenant", "-t", help="Tenant name to import from"),
     space: str | None = typer.Option(None, "--space", "-s", help="Kibana space to import from"),
+    include_prebuilt: bool = typer.Option(
+        True,
+        "--include-prebuilt/--custom-only",
+        help="Include prebuilt and immutable Elastic rules (default: include)",
+    ),
 ) -> None:
     _deprecate("opentide extract elastic_security", "opentide generate extract elastic_security")
     cli = get_context(ctx)
-    kwargs: dict[str, object] = {}
+    kwargs: dict[str, object] = {
+        "include_prebuilt": include_prebuilt,
+    }
     if tenant is not None:
         kwargs["tenant"] = tenant
     if space is not None:

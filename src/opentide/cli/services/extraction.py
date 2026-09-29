@@ -54,12 +54,12 @@ def _run_engine_module(module_name: str, target: ExtractImport, **kwargs: object
     runner = getattr(module, "run", None)
     if runner is None:
         raise FileNotFoundError(f"Extraction module has no run(): {module_name}")
-        try:
-            runner(**kwargs)
-        except TypeError as exc:
-            raise TypeError(
-                f"Extraction module runner in {module_name} failed with arguments {list(kwargs.keys())}: {exc}"
-            ) from exc
+    try:
+        runner(**kwargs)
+    except TypeError as exc:
+        raise TypeError(
+            f"Extraction module runner in {module_name} failed with arguments {list(kwargs.keys())}: {exc}"
+        ) from exc
 
 
 def run_extract_import(target: ExtractImport, **kwargs: object) -> None:

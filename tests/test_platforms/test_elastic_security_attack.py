@@ -55,9 +55,12 @@ def test_resolve_elastic_threat_subtechnique_nesting_and_inheritance() -> None:
     mock_rule.configurations.elastic_security.threat = None
 
     # Suppose techniques_resolver returns an inherited technique T1548.002 and T1059.001
-    with patch(
-        "opentide.platforms.elastic_security.attack.techniques_resolver",
-        return_value=["T1548.002", "T1059.001"],
+    with (
+        patch("opentide.platforms.elastic_security.attack.get_type", return_value="rule"),
+        patch(
+            "opentide.platforms.elastic_security.attack.techniques_resolver",
+            return_value=["T1548.002", "T1059.001"],
+        ),
     ):
         result = resolve_elastic_threat(mock_rule)
 
@@ -79,3 +82,18 @@ def test_resolve_elastic_threat_subtechnique_nesting_and_inheritance() -> None:
     assert sub is not None
     assert sub["name"] == "Bypass User Account Control"
     assert sub["reference"] == "https://attack.mitre.org/techniques/T1548/002"
+
+
+def test_resolve_elastic_threat_unindexed_uuid_uses_data_techniques_without_resolver() -> None:
+    mock_rule = MagicMock()
+    mock_rule.metadata.uuid = "non-existent-uuid-9999"
+    mock_rule.configurations.elastic_security.threat = None
+    mock_rule.techniques = ["T1548.002"]
+
+    with patch("opentide.platforms.elastic_security.attack.techniques_resolver") as mock_resolver:
+        result = resolve_elastic_threat(mock_rule)
+        mock_resolver.assert_not_called()
+
+    assert len(result) >= 1
+    priv_threat = next((t for t in result if t["tactic"]["id"] == "TA0004"), None)
+    assert priv_threat is not None

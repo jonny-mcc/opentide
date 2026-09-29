@@ -124,6 +124,7 @@ def render_rule_doc(
     elastic_cfg: dict[str, Any] = {
         "schema": "platform::elastic_security::1.0",
         "status": status,
+        "enabled": bool(rule.get("enabled", True)),
         "tenants": [tenant_name],
         "type": rule.get("type", "query"),
     }
@@ -161,6 +162,7 @@ def render_rule_doc(
         "event_category_override",
         "tiebreaker_field",
         "threshold",
+        "threat",
         "threat_index",
         "threat_mapping",
         "threat_query",
@@ -225,8 +227,9 @@ def import_rules_from_ndjson(
     tenant_name: str,
     destination: Path = Path("Imported"),
     default_tlp: str = "amber",
+    include_prebuilt: bool = True,
 ) -> list[Path]:
-    """Parse NDJSON rules export and write custom rules to YAML files in destination."""
+    """Parse NDJSON rules export and write rules to YAML files in destination."""
     destination.mkdir(parents=True, exist_ok=True)
     existing_uuid_map = _find_existing_files_by_uuid(destination)
     written_paths: list[Path] = []
@@ -250,7 +253,11 @@ def import_rules_from_ndjson(
             continue
 
         # Skip export summary line and generic exception_list marker
-        if "export_summary" in entry or entry.get("type") == "exception_list":
+        if (
+            "export_summary" in entry
+            or "exported_count" in entry
+            or entry.get("type") == "exception_list"
+        ):
             continue
 
         # Exception list item: has item_id or entries
@@ -266,7 +273,7 @@ def import_rules_from_ndjson(
         # Rule line: must have rule_id or name
         if "rule_id" in entry or "type" in entry:
             rule = entry
-            if not is_custom_rule(rule):
+            if not include_prebuilt and not is_custom_rule(rule):
                 continue
 
             rule_id, rule_name, doc = render_rule_doc(rule, tenant_name, default_tlp=default_tlp)
@@ -329,6 +336,7 @@ def import_elastic_security_rules(
     tenant_name: str | None = None,
     space: str | None = None,
     destination: Path = Path("Imported"),
+    include_prebuilt: bool = True,
 ) -> list[Path]:
     """Connect to Kibana detection engine, export rules, and write them to disk."""
     tenants = OpenTide.Configurations.Systems.ElasticSecurity.tenants
@@ -370,6 +378,7 @@ def import_elastic_security_rules(
             tenant_name=tenant.name,
             destination=destination,
             default_tlp=default_tlp,
+            include_prebuilt=include_prebuilt,
         )
         written_paths.extend(paths)
 
@@ -380,10 +389,16 @@ def run(
     tenant: str | None = None,
     space: str | None = None,
     destination: Path | None = None,
+    include_prebuilt: bool = True,
 ) -> None:
     """Entry point used by ``opentide generate extract elastic_security``."""
     dest = destination if destination is not None else Path("Imported")
-    import_elastic_security_rules(tenant_name=tenant, space=space, destination=dest)
+    import_elastic_security_rules(
+        tenant_name=tenant,
+        space=space,
+        destination=dest,
+        include_prebuilt=include_prebuilt,
+    )
 
 
 if __name__ == "__main__":

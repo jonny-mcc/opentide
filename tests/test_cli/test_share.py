@@ -141,9 +141,14 @@ def test_disabled_target_and_unknown_type(invoke_cli, tide_corpus_repo: Path) ->
     assert unknown.exit_code == 2
 
 
-def test_share_help_lists_the_subcommands(cli_runner) -> None:
+def test_share_help_lists_the_subcommands(
+    cli_runner, monkeypatch: pytest.MonkeyPatch
+) -> None:
     from opentide.cli import app
 
+    # A narrow GitHub Actions terminal ellipsizes long options (`--chan…`).
+    monkeypatch.setenv("COLUMNS", "120")
+    monkeypatch.setenv("LINES", "40")
     result = cli_runner.invoke(app, ["share", "--help"])
     assert result.exit_code == 0
     for name in ("push", "preview", "status", "retract", "targets"):
@@ -393,8 +398,22 @@ def test_catalogue_ignores_a_malformed_index(
     assert unpathed[0].parse_error == "missing"
 
 
-_OUTSIDE_CI = {"CI": "", "GITHUB_ACTIONS": "", "TF_BUILD": ""}
-_GITHUB_PUSH = {"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": "push"}
+def _ci_env(**overrides: str) -> dict[str, str]:
+    """Isolate one CI platform. Click keeps runner variables that are not replaced."""
+    env = {
+        "CI": "",
+        "GITHUB_ACTIONS": "",
+        "GITHUB_EVENT_NAME": "",
+        "TF_BUILD": "",
+        "BUILD_REASON": "",
+        "CI_PIPELINE_SOURCE": "",
+    }
+    env.update(overrides)
+    return env
+
+
+_OUTSIDE_CI = _ci_env()
+_GITHUB_PUSH = _ci_env(GITHUB_ACTIONS="true", GITHUB_EVENT_NAME="push")
 _OBJECTIVE = "objects/objectives/objective-0001-credential-access.yaml"
 _OBJECTIVE_UUID = "00000000-0000-4000-8002-000000000001"
 
@@ -422,7 +441,7 @@ def test_changed_stops_before_git_or_http(
             "push",
             "--changed",
             repo=tide_corpus_repo,
-            extra_env={"GITHUB_ACTIONS": "true", "GITHUB_EVENT_NAME": event},
+            extra_env=_ci_env(GITHUB_ACTIONS="true", GITHUB_EVENT_NAME=event),
         )
         assert pull.exit_code == 1, pull.stdout
         assert json.loads(pull.stdout)["preflight"] == "changed_on_pull_request"
@@ -432,7 +451,7 @@ def test_changed_stops_before_git_or_http(
         "push",
         "--changed",
         repo=tide_corpus_repo,
-        extra_env={"CI_PIPELINE_SOURCE": "merge_request_event"},
+        extra_env=_ci_env(CI="true", CI_PIPELINE_SOURCE="merge_request_event"),
     )
     assert json.loads(gitlab.stdout)["preflight"] == "changed_on_pull_request"
 
@@ -441,7 +460,7 @@ def test_changed_stops_before_git_or_http(
         "push",
         "--changed",
         repo=tide_corpus_repo,
-        extra_env={"TF_BUILD": "True", "BUILD_REASON": "PullRequest"},
+        extra_env=_ci_env(TF_BUILD="True", BUILD_REASON="PullRequest"),
     )
     assert json.loads(azure.stdout)["preflight"] == "changed_on_pull_request"
 
@@ -512,7 +531,7 @@ def test_changed_uses_the_production_diff(
         "push",
         "--changed",
         repo=tide_corpus_repo,
-        extra_env={"TF_BUILD": "True", "BUILD_REASON": "IndividualCI"},
+        extra_env=_ci_env(TF_BUILD="True", BUILD_REASON="IndividualCI"),
     )
     assert azure.exit_code == 0, azure.stdout
     assert "No changed objects to share" in azure.stdout
@@ -521,7 +540,7 @@ def test_changed_uses_the_production_diff(
         "push",
         "--changed",
         repo=tide_corpus_repo,
-        extra_env={"CI_PIPELINE_SOURCE": "push"},
+        extra_env=_ci_env(CI="true", CI_PIPELINE_SOURCE="push"),
     )
     assert gitlab.exit_code == 0, gitlab.stdout
     assert "No changed objects to share" in gitlab.stdout

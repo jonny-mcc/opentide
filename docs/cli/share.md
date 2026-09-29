@@ -22,7 +22,7 @@ opentide share targets
 | Command | Effect |
 |---------|--------|
 | `push` | Create or update one MISP Event per selected object |
-| `preview` | Same decision as push, with no request and no ledger write. `push --dry-run` is the same command |
+| `preview` | Same decision as push, with no request and no ledger write. An unset API key does not block it. `push --dry-run` is the same command |
 | `status` | Compare the local ledger with the current object. No remote call |
 | `retract` | Unpublish the matched event. `--delete --yes` removes the event and the ledger line |
 | `targets` | List integration, name, enabled, `max_tlp`, and URL. The API key is never printed |

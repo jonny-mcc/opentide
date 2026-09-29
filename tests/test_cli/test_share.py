@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 
 import pytest
@@ -141,19 +142,19 @@ def test_disabled_target_and_unknown_type(invoke_cli, tide_corpus_repo: Path) ->
     assert unknown.exit_code == 2
 
 
-def test_share_help_lists_the_subcommands(
-    cli_runner, monkeypatch: pytest.MonkeyPatch
-) -> None:
+def test_share_help_lists_the_subcommands(cli_runner, monkeypatch: pytest.MonkeyPatch) -> None:
     from opentide.cli import app
 
-    # A narrow GitHub Actions terminal ellipsizes long options (`--chan…`).
+    # GitHub Actions forces color, and a narrow width ellipsizes `--changed`.
     monkeypatch.setenv("COLUMNS", "120")
     monkeypatch.setenv("LINES", "40")
+    monkeypatch.setenv("NO_COLOR", "1")
+    monkeypatch.delenv("FORCE_COLOR", raising=False)
     result = cli_runner.invoke(app, ["share", "--help"])
     assert result.exit_code == 0
-    for name in ("push", "preview", "status", "retract", "targets"):
-        assert name in result.stdout
-    assert "--changed" in result.stdout
+    plain = re.sub(r"\x1b\[[0-9;]*m", "", result.stdout)
+    for name in ("push", "preview", "status", "retract", "targets", "--changed"):
+        assert name in plain
     push = cli_runner.invoke(app, ["share", "push", "--help"])
     assert push.exit_code == 0
     assert "--changed" in push.stdout

@@ -30,6 +30,7 @@ The wizard needs a terminal and a stdout it can draw on, so it is incompatible w
 | `--ci` | `github`, `gitlab`, `azure`, or `none` |
 | `--staging` / `--no-staging` | CI staging stage (default: on) |
 | `--inflight` / `--no-inflight` | Update pull-request preview shards (default: on) |
+| `--sharing` / `--no-sharing` | Share changed objects on the default branch (default: off) |
 | `--promotion` / `--no-promotion` | Status promotion in `opentide deploy`. Omit the flag to keep the repository's setting; `--no-promotion` writes `[promotion] enabled = false` (see [setup ci](#setup-ci)) |
 | `--explorer-pages` / `--no-explorer-pages` | Include GitHub Pages explorer jobs |
 | `--promotion-target` | Status `deploy` promotes rules to. Omit the flag to keep the repository's setting; another status is written as `[promotion] promotion_target` |
@@ -92,7 +93,9 @@ opentide setup --ci azure --default-branch development --yes
 
 Positional argument: `github`, `gitlab`, or `azure` (CI **provider**, not Sentinel/Splunk/etc.).
 
-`setup ci` accepts the same CI flags as the [default callback](#default-callback-flags) (`--staging`, `--inflight`, `--promotion`, `--promotion-target`, `--python-version`, `--explorer-pages`, `--default-branch`, `--path`, `--yes`), so `opentide setup --ci github --default-branch trunk --yes` and `opentide setup ci github --default-branch trunk --yes` write the same pipeline and print the same `WARNING` lines. The one-shot JSON result lists each step's warnings under `steps[].warnings` and again in the top-level `warnings`.
+`setup ci` accepts the same CI flags as the [default callback](#default-callback-flags) (`--staging`, `--inflight`, `--sharing`, `--promotion`, `--promotion-target`, `--python-version`, `--explorer-pages`, `--default-branch`, `--path`, `--yes`), so `opentide setup --ci github --default-branch trunk --yes` and `opentide setup ci github --default-branch trunk --yes` write the same pipeline and print the same `WARNING` lines. The one-shot JSON result lists each step's warnings under `steps[].warnings` and again in the top-level `warnings`.
+
+`--sharing` adds one job, `share`, that runs `opentide share push --changed` after generate on a push to the default branch. Deploy does not wait for it. The flag does not write `sharing.toml` and does not ask for a URL, API key, or block name. The wizard checkbox is "Sharing on the default branch", and it stays unchecked. `--sharing` with `--ci none`, or with no `--ci`, warns and writes no pipeline. A later `setup ci` that leaves the flag off removes the job when it rewrites the pipeline.
 
 `--default-branch` names the branch that triggers deploys and receives inflight shards. It applies to GitHub and Azure; GitLab pipelines always use `$CI_DEFAULT_BRANCH` and warn that the flag is ignored.
 

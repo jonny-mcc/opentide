@@ -35,12 +35,21 @@ Hand-written examples below pin `pip install 'opentide==0.6.4'` so a pipeline ca
 | Flag | Default | Purpose |
 |------|---------|---------|
 | `--staging` / `--no-staging` | staging on | Include the staging deploy stage |
+| `--sharing` / `--no-sharing` | sharing off | On the default branch, after generate, run `opentide share push --changed` |
 | `--promotion` / `--no-promotion` | omit (keep the repository's setting) | Whether `opentide deploy` promotes rules; `--no-promotion` writes `[promotion] enabled = false` to `.opentide/configurations/deployment.toml` |
 | `--promotion-target` | omit (keep the repository's setting) | Status `deploy` promotes rules to; another status is written to the same `[promotion]` table |
 | `--python-version` | `3.12` | CI Python version |
 | `--default-branch` | `origin/HEAD`, then the checked-out branch, then `init.defaultBranch`, then `main` | Branch that deploys and receives inflight shards (GitHub, Azure; GitLab uses `$CI_DEFAULT_BRANCH`) |
 
 The one-shot `opentide setup --ci <github|gitlab|azure>` accepts the same flags. On a repository without `origin/HEAD` whose deploying branch is not checked out, pass `--default-branch`; the result warns when the detected branch is only a guess.
+
+`--sharing` is off unless you pass it or tick "Sharing on the default branch" in the wizard. The generated job checks out full history and runs only:
+
+```bash
+opentide share push --changed
+```
+
+GitHub runs that job when `github.event_name == 'push'` and the ref is the default branch. GitLab runs it when `CI_COMMIT_BRANCH` is `CI_DEFAULT_BRANCH` and the pipeline is not a merge request. Azure runs it when `Build.SourceBranch` is the default branch and `Build.Reason` is not `PullRequest`. The job needs generate. Deploy still needs only generate, so a share failure does not block deploy and deploy does not block share. API keys stay in the CI secret store; the workflow names none of them. Setup does not write `.opentide/configurations/sharing.toml`.
 
 ## Stage 1 — validate every PR
 

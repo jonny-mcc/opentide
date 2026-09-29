@@ -27,6 +27,7 @@ def _dispatch(
     workers: int,
     delete: bool,
     yes: bool,
+    changed: bool = False,
 ) -> None:
     cli = get_context(ctx)
     payload = run_share(
@@ -41,6 +42,7 @@ def _dispatch(
         workers=workers,
         delete=delete,
         confirmed=yes,
+        changed=changed,
     )
     if not cli.json_output:
         render_share(payload)
@@ -67,6 +69,11 @@ def share_default(
     workers: int = typer.Option(
         1, "--workers", help="Parallel object workers for one destination."
     ),
+    changed: bool = typer.Option(
+        False,
+        "--changed",
+        help="Share only objects the default-branch CI diff changed.",
+    ),
 ) -> None:
     """Publish objects to every enabled sharing target (same as ``share push``)."""
     if ctx.invoked_subcommand is not None:
@@ -83,6 +90,7 @@ def share_default(
         workers=workers,
         delete=False,
         yes=False,
+        changed=changed,
     )
 
 
@@ -96,6 +104,11 @@ def share_push(
     dry_run: bool = typer.Option(False, "--dry-run"),
     publish: bool | None = typer.Option(None, "--publish/--no-publish"),
     workers: int = typer.Option(1, "--workers"),
+    changed: bool = typer.Option(
+        False,
+        "--changed",
+        help="Share only objects the default-branch CI diff changed.",
+    ),
 ) -> None:
     """Create or update one MISP Event per selected Tide object."""
     _dispatch(
@@ -110,6 +123,7 @@ def share_push(
         workers=workers,
         delete=False,
         yes=False,
+        changed=changed,
     )
 
 

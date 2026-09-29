@@ -16,6 +16,10 @@ from opentide.ci.stages import (
 )
 from opentide.ci.text import indent, join_blocks
 
+_SHARE_STEPS_NOTE = (
+    "# API key environment variables named in sharing.toml come from the CI secret store."
+)
+
 
 def _setup_steps(options: CiRenderOptions, *, full_history: bool = False) -> str:
     """Checkout, Python, and pip install — unindented relative to ``steps:``."""
@@ -134,7 +138,7 @@ def _explorer_jobs(branch: str, python_version: str) -> list[str]:
           name: Deploy explorer to GitHub Pages
           runs-on: ubuntu-latest
           needs: explorer
-          if: github.event_name == 'push' && github.ref == format('refs/heads/{branch}')
+          if: github.event_name == 'push' && github.ref == 'refs/heads/{branch}'
           permissions:
             pages: write
             id-token: write
@@ -166,6 +170,26 @@ def render_github(options: CiRenderOptions) -> str:
         _github_job("validate", name="Validate", steps=validate_steps),
         _github_job("generate", name="Generate", needs="validate", steps=generate_steps),
     ]
+
+    prod_if = f"github.event_name == 'push' && github.ref == 'refs/heads/{branch}'"
+    if options.sharing:
+        jobs.append(
+            _github_job(
+                "share",
+                name="Share",
+                needs="generate",
+                if_cond=prod_if,
+                steps=join_blocks(
+                    _setup_steps(options, full_history=True),
+                    "\n".join(
+                        [
+                            _SHARE_STEPS_NOTE,
+                            _run_steps(["opentide share push --changed"]),
+                        ]
+                    ),
+                ),
+            )
+        )
 
     if options.staging:
         jobs.append(
@@ -199,7 +223,7 @@ def render_github(options: CiRenderOptions) -> str:
 
     # Staging runs only on pull requests. Production runs on push to the default
     # branch, so it cannot ``needs`` the staging job: a skipped need skips it too.
-    prod_if = f"github.event_name == 'push' && github.ref == format('refs/heads/{branch}')"
+    # Share uses the same push condition and also needs only generate.
     jobs.append(
         _github_job(
             "deploy_production",

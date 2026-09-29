@@ -69,8 +69,8 @@ fi
 
 | Code | Meaning |
 |-----:|---------|
-| `0` | Nothing failed. An all-skip run exits `0` |
-| `1` | Preflight (configuration, scope, confirmation) or a non-auth object failure with no success |
+| `0` | Nothing failed. An all-skip run exits `0`. `share push --changed` also exits `0` for an empty diff or when no block is enabled |
+| `1` | Preflight (configuration, scope, confirmation, `--changed` outside CI or on a pull request) or a non-auth object failure with no success |
 | `2` | Every failure is authentication or connectivity, and nothing succeeded |
 | `3` | At least one success and at least one failure |
 

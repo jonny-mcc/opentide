@@ -46,6 +46,8 @@ def _gitlab_job(
 
 def render_gitlab(options: CiRenderOptions) -> str:
     stages = ["validate", "generate", "deploy", "document"]
+    if options.sharing:
+        stages.insert(2, "share")
 
     query_jobs: list[str] = []
     for platform in options.platforms:
@@ -140,6 +142,21 @@ def render_gitlab(options: CiRenderOptions) -> str:
 
     parts = [header_comment(options), core]
     parts.extend(query_jobs)
+    if options.sharing:
+        parts.append(
+            _gitlab_job(
+                "share",
+                options=options,
+                stage="share",
+                script=["opentide share push --changed"],
+                needs="generate",
+                rules=(
+                    "$CI_COMMIT_BRANCH == $CI_DEFAULT_BRANCH && "
+                    '$CI_PIPELINE_SOURCE != "merge_request_event"'
+                ),
+                extra_lines=["  variables:", '    GIT_DEPTH: "0"'],
+            )
+        )
     parts.extend(deploy_jobs)
     parts.append(document_job)
     return "\n".join(parts) + "\n"

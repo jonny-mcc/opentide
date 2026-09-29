@@ -33,6 +33,7 @@ from opentide.cli.services.info import collect_info, render_info
 from opentide.cli.services.lint import render_findings, run_lint
 from opentide.cli.services.validation import run_validate, validate_query_platform
 from opentide.cli.setup_app import setup_app
+from opentide.cli.share_app import share_app
 from opentide.core.logging import LoggingConfig, init_logging
 from opentide.core.logging import print_banner as print_banner  # noqa: F401
 from opentide.core.root import get_repo_root
@@ -103,6 +104,7 @@ def main_callback(
 
 
 app.add_typer(setup_app, name="setup")
+app.add_typer(share_app, name="share")
 
 generate_app = typer.Typer(help="Framework generation and documentation pipeline")
 app.add_typer(generate_app, name="generate")

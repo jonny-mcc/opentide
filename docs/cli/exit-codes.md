@@ -63,8 +63,20 @@ else
 fi
 ```
 
+## Share
+
+[`opentide share`](./share.md) keeps `0` and `1`, and adds two codes. `2` on share means every object failure was authentication or connectivity. `3` means the run both succeeded and failed. Skipped objects are not failures. The global `2` usage error still applies to unknown flags and unknown `--type` values.
+
+| Code | Meaning |
+|-----:|---------|
+| `0` | Nothing failed. An all-skip run exits `0` |
+| `1` | Preflight (configuration, scope, confirmation) or a non-auth object failure with no success |
+| `2` | Every failure is authentication or connectivity, and nothing succeeded |
+| `3` | At least one success and at least one failure |
+
 ## Related
 
 - [`validate`](./validate.md) — `--strict` and object/query checks.
 - [`deploy`](./deploy.md) — deployment errors and warnings.
+- [`share`](./share.md) — MISP push, preview, status, and retract.
 - [CI/CD](../usage/workflows/ci-cd.md) — pipelines that gate on these codes.

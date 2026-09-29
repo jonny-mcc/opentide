@@ -143,6 +143,15 @@ def test_unchanged_read_does_not_create_the_file(tmp_path: Path) -> None:
     assert not path.exists()
 
 
+def test_records_lists_identity_lines_only(tmp_path: Path) -> None:
+    path = tmp_path / "sharing.jsonl"
+    path.write_text('not json\n{"hello":"no triple"}\n', encoding="utf-8")
+    ledger = ShareLedger.load(path)
+    ledger.put(_synced())
+    assert len(ledger.records()) == 1
+    assert ledger.records()[0]["state"] == "synced"
+
+
 def test_put_refuses_a_line_without_identity() -> None:
     ledger = ShareLedger(Path("unused"))
     with pytest.raises(ValueError, match="object_uuid"):

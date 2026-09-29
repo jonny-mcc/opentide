@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import subprocess
+import sys
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -10,6 +12,21 @@ from typer.testing import CliRunner
 from opentide.cli import app
 
 runner = CliRunner()
+
+
+def test_cli_import_does_not_load_pymisp() -> None:
+    """PyMISP logs at import. That must not run for every opentide command."""
+    done = subprocess.run(
+        [
+            sys.executable,
+            "-c",
+            "import sys\nfrom opentide.cli import app\nraise SystemExit('pymisp' in sys.modules)",
+        ],
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+    assert done.returncode == 0, done.stderr
 
 
 def test_cli_help_lists_commands() -> None:

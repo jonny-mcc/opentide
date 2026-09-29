@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 _IMPORT_MODULES: dict[ExtractImport, str] = {
     ExtractImport.sentinel: "opentide.extraction.sentinel_importer",
     ExtractImport.defender: "opentide.extraction.mde_importer",
+    ExtractImport.elastic_security: "opentide.extraction.elastic_security_importer",
 }
 
 #: Extra that provides the vendor SDK each importer needs, keyed by target.

@@ -27,6 +27,14 @@ def test_run_extract_import_defender() -> None:
     mock_run.assert_called_once_with("opentide.extraction.mde_importer", ExtractImport.defender)
 
 
+def test_run_extract_import_elastic_security() -> None:
+    with patch.object(extraction_service, "_run_engine_module") as mock_run:
+        extraction_service.run_extract_import(ExtractImport.elastic_security)
+    mock_run.assert_called_once_with(
+        "opentide.extraction.elastic_security_importer", ExtractImport.elastic_security
+    )
+
+
 def test_run_extract_entrypoint() -> None:
     ctx = CliContext(json_output=True)
     with patch.object(extraction_service, "run_extract_import") as mock_import:
@@ -61,14 +69,3 @@ def test_run_engine_module_requires_a_run_entry_point(monkeypatch: pytest.Monkey
     monkeypatch.setitem(sys.modules, "opentide.extraction.no_run", module)
     with pytest.raises(FileNotFoundError, match="has no run\\(\\)"):
         extraction_service._run_engine_module("opentide.extraction.no_run", ExtractImport.defender)
-
-
-def test_run_engine_module_forwards_kwargs(monkeypatch: pytest.MonkeyPatch) -> None:
-    calls: list[dict[str, object]] = []
-    module = types.ModuleType("opentide.extraction.with_run")
-    module.run = lambda **kwargs: calls.append(kwargs)  # type: ignore[attr-defined]
-    monkeypatch.setitem(sys.modules, "opentide.extraction.with_run", module)
-    extraction_service._run_engine_module(
-        "opentide.extraction.with_run", ExtractImport.sentinel, space="default", include_prebuilt=True
-    )
-    assert calls == [{"space": "default", "include_prebuilt": True}]

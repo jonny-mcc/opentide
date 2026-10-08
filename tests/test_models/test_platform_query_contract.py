@@ -23,9 +23,13 @@ from opentide.models.platform import (
 from opentide.models.platform_schema import platform_root_extras
 
 #: Platforms whose configuration carries a query string at all. SentinelOne
-#: expresses detection through `condition`, HarfangLab through sigma/yara.
+#: expresses detection through `condition`, HarfangLab through sigma/yara, and
+#: Elastic Security supports multiple rule types including machine_learning
+#: where query is optional.
 QUERY_PLATFORMS = [
-    key for key, model in PLATFORM_CONFIG_MODELS.items() if "query" in model.model_fields
+    key
+    for key, model in PLATFORM_CONFIG_MODELS.items()
+    if "query" in model.model_fields and key != "elastic"
 ]
 
 

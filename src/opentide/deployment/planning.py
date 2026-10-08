@@ -108,6 +108,10 @@ class TideDeployment:
                 self.rule_deployment: Sequence[TenantDeployment.HarfangLab] = (
                     self.deployment_resolver(deployment, system, strategy)  # type:ignore
                 )
+            case DetectionPlatforms.ELASTIC:
+                self.rule_deployment: Sequence[TenantDeployment.Elastic] = (
+                    self.deployment_resolver(deployment, system, strategy)  # type:ignore
+                )
             case _:
                 raise NotImplementedError(f"System {system} is not implemented by TideDeployment")
 
@@ -127,6 +131,8 @@ class TideDeployment:
                 return registry.OpenTide.Configurations.Systems.Crowdstrike
             case DetectionPlatforms.HARFANGLAB:
                 return registry.OpenTide.Configurations.Systems.HarfangLab
+            case DetectionPlatforms.ELASTIC:
+                return registry.OpenTide.Configurations.Systems.Elastic
             # case _:
             # raise NotImplementedError
         return None
@@ -149,6 +155,8 @@ class TideDeployment:
                 mdr_config = data.configurations.splunk
             case DetectionPlatforms.CARBON_BLACK_CLOUD:
                 mdr_config = data.configurations.carbon_black_cloud
+            case DetectionPlatforms.ELASTIC:
+                mdr_config = data.configurations.elastic
             case _:
                 logger.critical(
                     "could_not_resolve_mdr_configuration_for_system", detail=str(system)

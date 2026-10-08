@@ -9,6 +9,7 @@ from opentide.models.platform import (
     CarbonBlackConfig,
     CrowdstrikeConfig,
     DefenderConfig,
+    ElasticConfig,
     HarfangLabConfig,
     PlatformConfigBase,
     SentinelConfig,
@@ -382,6 +383,10 @@ def load_carbon_black_config(mdr_config: dict[str, Any]) -> CarbonBlackConfig:
     )
 
 
+def load_elastic_config(mdr_config: dict[str, Any]) -> ElasticConfig:
+    return ElasticConfig.model_validate(mdr_config)
+
+
 _PLATFORM_LOADERS = {
     "sentinel": load_sentinel_config,
     "defender_for_endpoint": load_defender_config,
@@ -390,6 +395,7 @@ _PLATFORM_LOADERS = {
     "crowdstrike": load_crowdstrike_config,
     "harfanglab": load_harfanglab_config,
     "carbon_black_cloud": load_carbon_black_config,
+    "elastic": load_elastic_config,
 }
 
 

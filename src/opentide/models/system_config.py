@@ -229,6 +229,7 @@ class ConfigurationModels:
                     index: Sequence[str] | None = None
                     tags: Sequence[str] | None = None
                     suppression: bool = True
+                    bulk_import: bool = False
 
                 setup: Setup
 

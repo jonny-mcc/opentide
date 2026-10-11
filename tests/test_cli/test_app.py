@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import subprocess
 import sys
 from unittest.mock import MagicMock, patch
@@ -39,6 +40,7 @@ def test_cli_help_lists_commands() -> None:
         "deploy",
         "share",
         "info",
+        "mcp",
     ):
         assert command in result.stdout
 
@@ -61,19 +63,73 @@ def test_info_json_output() -> None:
     assert '"platforms"' in result.stdout
 
 
+def test_info_strict_json_reports_parse_errors() -> None:
+    payload = {
+        "version": "0",
+        "repo": "/tmp",
+        "counts": {"rules": 0, "threats": 0, "objectives": 0},
+        "parse_error_count": 2,
+        "platforms": [],
+    }
+    with patch("opentide.cli.collect_info", return_value=payload):
+        result = runner.invoke(app, ["--json", "info", "--strict"])
+    assert result.exit_code == 1
+    body = json.loads(result.stdout)
+    assert body["ok"] is False
+    assert body["status"] == "failed"
+    assert body["parse_error_count"] == 2
+    assert body["message"] == "Repository has objects that failed to load"
+
+
+def test_info_strict_human_exits_when_objects_fail_to_load() -> None:
+    payload = {
+        "version": "0",
+        "repo": "/tmp",
+        "counts": {"rules": 0, "threats": 0, "objectives": 0},
+        "parse_error_count": 1,
+        "platforms": [],
+    }
+    with patch("opentide.cli.collect_info", return_value=payload):
+        result = runner.invoke(app, ["info", "--strict"])
+    assert result.exit_code == 1
+
+
 def test_generate_subcommands_invoke_services() -> None:
     with patch("opentide.cli.run_generate", return_value={"status": "ok"}) as mock_run:
-        for phase in ("schemas", "templates", "vocabs", "snippets", "exports"):
+        for phase in ("schemas", "templates", "vocabs", "snippets"):
             result = runner.invoke(app, ["--json", "generate", phase])
-            assert result.exit_code == 0, result.stdout
-        assert mock_run.call_count == 5
-        assert {call.kwargs["phase"] for call in mock_run.call_args_list} == {
-            "schemas",
-            "templates",
-            "vocabs",
-            "snippets",
-            "exports",
-        }
+            assert result.exit_code == 0, result.stdout + result.stderr
+            assert mock_run.call_args.kwargs["phases"] == [phase]
+        result = runner.invoke(app, ["--json", "generate", "exports"])
+        assert result.exit_code == 0, result.stdout + result.stderr
+        assert mock_run.call_args.kwargs["phase"] == "exports"
+
+
+def test_generate_runs_several_phases_in_the_given_order() -> None:
+    with patch("opentide.cli.run_generate", return_value={"status": "ok"}) as mock_run:
+        result = runner.invoke(
+            app,
+            ["--json", "generate", "schemas", "templates", "vocabs", "snippets"],
+        )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    assert mock_run.call_args.kwargs["phases"] == [
+        "schemas",
+        "templates",
+        "vocabs",
+        "snippets",
+    ]
+
+
+def test_nested_generate_commands_stay_commands() -> None:
+    for argv in (
+        ["generate", "docs", "--help"],
+        ["generate", "exports", "--help"],
+        ["generate", "extract", "--help"],
+        ["generate", "inflight", "--help"],
+        ["generate", "explorer", "--help"],
+    ):
+        result = runner.invoke(app, argv)
+        assert result.exit_code == 0, result.stdout + result.stderr
 
 
 def test_generate_docs_group_invokes_service() -> None:

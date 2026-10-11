@@ -4,7 +4,7 @@ description: Install opentide from PyPI — one package, CLI, MCP, and all platf
 ---
 
 <Callout type="info">
-One install gets the CLI, MCP server (`opentide-mcp`), all seven platform adapters, validate, generate, and deploy. Enable platforms in your repo with `opentide setup platforms` — not at pip install time.
+One install gets the CLI, the MCP server (`opentide mcp start`), all seven platform adapters, validate, generate, and deploy. Enable platforms in your repo with `opentide setup platforms` — not at pip install time.
 </Callout>
 
 ## Requirements
@@ -23,7 +23,7 @@ Install OpenTide into a virtual environment so its dependencies never collide wi
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate.ps1
+source .venv/bin/activate        # Windows: .venv\Scripts\activate
 ```
 
 </Tab>
@@ -40,12 +40,12 @@ uv venv
 
 ## PyPI install
 
-The latest release is **0.9.0** (5 October 2026). The first public release was **0.1.0** (9 September 2026). Notes: [Releases](./releases.md).
+The latest release is **0.12.1** (9 October 2026). The first public release was **0.1.0** (9 September 2026). Notes: [Releases](./releases.md).
 
 ```bash
 pip install opentide              # latest on PyPI
 # python -m pip install opentide  # in constrained environments
-pip install 'opentide==0.9.0'     # pin the current release
+pip install 'opentide==0.12.1'     # pin the current release
 ```
 
 </Tab>
@@ -65,6 +65,8 @@ That installs the **DetectionOps engine**: the `opentide` CLI, validation, gener
 
 ### opentide-mcp
 
+For agent/MCP hosts, install `'opentide[mcp]'` and remember the path to this environment's `opentide` binary — you point the host at `opentide mcp start` in [MCP configuration](../mcp/configuration.md).
+
 The MCP server needs one extra step:
 
 <Tabs items={['venv + pip', 'uv']}>
@@ -72,7 +74,7 @@ The MCP server needs one extra step:
 <Tab value="venv + pip">
 
 ```bash
-pip install 'opentide[mcp]'       # adds mcp (>=1.28.1,<2) for `opentide-mcp`
+pip install 'opentide[mcp]'       # adds mcp (>=1.28.1,<2) for `opentide mcp start`
 ```
 
 </Tab>
@@ -156,9 +158,9 @@ OpenTide ships platform logic in the wheel. **Third-party SDKs** are only requir
 Defender, CrowdStrike, SentinelOne, and HarfangLab use HTTP clients bundled with opentide.
 
 Extras are only needed for live API calls — live deploy, and `opentide validate
-query --live`. The default `opentide validate query` is offline and works on a
-stock install, as do `generate`, `validate`, and dry-run deploy. If you hit a
-missing SDK, the command names the extra to install.
+query --live`. A bare `opentide validate query` refuses and names `--live`.
+`generate`, `validate`, and dry-run deploy work on a stock install. If a live
+check hits a missing SDK, the command names the extra to install.
 
 ### Platform identifiers
 

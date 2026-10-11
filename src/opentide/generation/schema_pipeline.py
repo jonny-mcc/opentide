@@ -393,7 +393,7 @@ _Vocabulary_ : `{source_vocab}`
     class Logsources:
         """Resolve log source entries from visibility configuration."""
 
-        def resolve(self) -> None | tuple[list[str], list[str]]:
+        def resolve(self, *, qualified: bool = True) -> None | tuple[list[str], list[str]]:
             visibility = VocabularyResolver._visibility()
             if not visibility or not visibility.logsources:
                 return None
@@ -409,6 +409,14 @@ _Vocabulary_ : `{source_vocab}`
                     base += "### Associated Assets:\n"
                     for a in ls.assets:
                         base += VocabularyResolver._format_asset(a, asset_map) + "\n"
+
+                # Signal logsources are authored as the visibility ``name``.
+                # Qualified ``system::name`` values stay for the visibility schema.
+                if not qualified:
+                    if ls.name not in enums:
+                        enums.append(ls.name)
+                        descriptions.append(base)
+                    continue
 
                 if ls.tenants:
                     for tenant in ls.tenants:
@@ -598,6 +606,57 @@ def recomposition_handler(entry_point):
     return recomposition
 
 
+def _array_items_are_objects(array_schema: dict) -> bool:
+    """True when array items are objects, so a string vocabulary enum does not belong there."""
+    items = array_schema.get("items")
+    if not isinstance(items, dict):
+        return False
+    return items.get("type") == "object" or "properties" in items or "$ref" in items
+
+
+def _apply_vocab_enum(field_schema: dict, temp: dict) -> None:
+    """Attach a vocabulary enum to a field, including ``anyOf`` / ``oneOf`` branches.
+
+    Optional lists are array-or-null and have no top-level ``type``. String-or-list
+    unions (``str | list[str] | None``) need the enum on the string branch and
+    ``items.enum`` on the array branch. A parent ``enum`` would reject arrays.
+
+    A list of objects (``threat.chaining``) must not receive that string enum on
+    ``items`` or on the array node. Leaving the field without an enum is correct
+    when the relation enum cannot be placed on ``chaining[].relation``.
+    """
+    alternatives = field_schema.get("anyOf") or field_schema.get("oneOf")
+    if isinstance(alternatives, list):
+        stamped = False
+        saw_object_array = False
+        for alternative in alternatives:
+            if not isinstance(alternative, dict):
+                continue
+            if alternative.get("type") == "array":
+                if _array_items_are_objects(alternative):
+                    saw_object_array = True
+                    continue
+                alternative["items"] = dict(temp)
+                alternative["uniqueItems"] = True
+                stamped = True
+            elif alternative.get("type") == "string":
+                alternative.update(temp)
+                stamped = True
+        if stamped or saw_object_array:
+            return
+
+    field_types = field_schema.get("type")
+    if field_types:
+        field_types = [field_types] if isinstance(field_types, str) else list(field_types)
+    if field_types is None or (field_types and "string" in field_types):
+        field_schema.update(temp)
+    elif field_types and "array" in field_types:
+        if _array_items_are_objects(field_schema):
+            return
+        field_schema["items"] = dict(temp)
+        field_schema["uniqueItems"] = True
+
+
 def gen_json_schema(dictionary, *, schema_id: str | None = None):
     """Recursively resolve OpenTide metaschema keywords into JSON Schema.
 
@@ -686,8 +745,11 @@ def gen_json_schema(dictionary, *, schema_id: str | None = None):
                     dictionary[field]["properties"] = temp
 
                 # Handles retrieval of logsources
-                if dict_foo[field].get("tide.config.visibility.logsources"):
-                    logsources_result = VocabularyResolver.Logsources().resolve()
+                logsource_names = dict_foo[field].get("tide.config.visibility.logsource-names")
+                if dict_foo[field].get("tide.config.visibility.logsources") or logsource_names:
+                    logsources_result = VocabularyResolver.Logsources().resolve(
+                        qualified=not logsource_names
+                    )
                     if logsources_result:
                         enums, descriptions = logsources_result
                         dictionary[field]["items"] = {}
@@ -788,17 +850,9 @@ def gen_json_schema(dictionary, *, schema_id: str | None = None):
                     temp["enum"] = enum
                     temp["markdownEnumDescriptions"] = markdown_enum
 
-                    # When no field type is present, assume it's a direct string
-                    # When the type is set to string, oneOf allows only one value
-                    # to be selected
-                    field_types = dict_foo[field].get("type")
-                    if field_types:
-                        field_types = [field_types] if isinstance(field_types, str) else field_types
-                    if field_types is None or "string" in field_types:
-                        dictionary[field].update(temp)
-                    elif "array" in field_types:
-                        dictionary[field]["items"] = temp
-                        dictionary[field]["uniqueItems"] = True
+                    # Plain string and array fields keep a top-level enum. Unions
+                    # (optional lists, string-or-list) stamp each alternative.
+                    _apply_vocab_enum(dictionary[field], temp)
 
                 else:
                     gen_json_schema(dictionary[field], schema_id=schema_id)

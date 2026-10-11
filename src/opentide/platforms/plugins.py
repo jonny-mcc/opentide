@@ -17,7 +17,7 @@ import structlog
 from opentide.models.deployment_enums import DeploymentStrategy
 from opentide.models.rule import DetectionRule
 # CrowdStrike and HarfangLab ship no validator module: `can_validate is False`.
-from opentide.validation.query_syntax import QUERY_VALIDATION_PLATFORMS
+from opentide.validation.query_platforms import QUERY_VALIDATION_PLATFORMS
 
 logger = structlog.get_logger('opentide.platforms.plugins')
 
@@ -95,6 +95,10 @@ class PlatformLoader:
             if module:
                 try:
                     engines[system] = module.declare()
+                except ValueError:
+                    # Config parsing (modifiers, retired proxy) raises ValueError
+                    # inside declare(). Rewriting it as "missing declare" hides the cause.
+                    raise
                 except Exception as exc:
                     logger.critical('engine_module_missing_declare', arg0=module_name, advice=repr(exc))
                     raise Exception(f'PLATFORM ENGINE IMPORT ERROR: {module_name} does not declare an engine') from exc

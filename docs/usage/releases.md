@@ -7,6 +7,112 @@ description: Public package versions of the OpenTide DetectionOps engine on PyPI
 
 The engine is the [`opentide`](https://pypi.org/project/opentide/) package. Pin a version in CI. Source of truth for notes is [`CHANGELOG.md`](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md) in the repository; GitHub Releases are tagged `v*` and publish to PyPI.
 
+## 0.12.1 — 9 October 2026
+
+Patch on 0.12.0. A missing credential is logged once. Re-run `opentide setup ci` so a live query job guards only the `$VAR` names in the enabled platform file and exits 2 when one is unset.
+
+**Install**
+
+```bash
+pip install opentide==0.12.1
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+**What changes for authors and scripts**
+
+- Each unset configuration variable is reported once, not once per object. The live check still ends on the FATAL panel.
+- Generated CI ignores comments and literal values in the platform file. A skip exits 2. Exit 0 means the tenant check ran.
+
+**Links**
+
+- [PyPI](https://pypi.org/project/opentide/0.12.1/)
+- [GitHub Release](https://github.com/OpenTideHQ/opentide/releases/tag/v0.12.1)
+- [CHANGELOG](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md)
+
+## 0.12.0 — 9 October 2026
+
+Minor on 0.11.0. **`opentide-mcp` is gone.** The command is `opentide mcp start`. Regenerate MCP config with `opentide setup mcp`. Re-run `opentide setup ci` so live query jobs run only when every required credential is set. Regenerate schemas with `opentide generate` so `threat.chaining` items are not stamped with a string enum.
+
+**Install**
+
+```bash
+pip install opentide==0.12.0
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+**What changes for authors and scripts**
+
+- The `opentide-mcp` console script is removed. Start the server with `opentide mcp start`. `opentide setup mcp` writes `command: opentide` and `args: ["mcp", "start"]` ([#460](https://github.com/OpenTideHQ/opentide/issues/460)).
+- Splunk `[[modifiers]]` loads as an array of tables. A config error during engine load is reported as that error, not only as a missing `declare` ([#466](https://github.com/OpenTideHQ/opentide/issues/466)).
+- Generated schemas no longer put a string vocabulary enum on `threat.chaining` items or on the array node. `list[str]` vocabulary fields still get `items.enum` ([#468](https://github.com/OpenTideHQ/opentide/issues/468)).
+- Stage-prefix suggestions strip using the field name ([#467](https://github.com/OpenTideHQ/opentide/issues/467)).
+- A retired `[tenants.setup] proxy` key fails the live query check and names `opentide --proxy` ([#469](https://github.com/OpenTideHQ/opentide/issues/469)).
+- `--live` fails when a credential is still `$VARIABLE`. Generated CI runs that job only when every required credential variable is set ([#471](https://github.com/OpenTideHQ/opentide/issues/471)).
+- Vocabulary and cross-object validation findings record `yaml_line` ([#470](https://github.com/OpenTideHQ/opentide/issues/470)).
+
+**Links**
+
+- [PyPI](https://pypi.org/project/opentide/0.12.0/)
+- [GitHub Release](https://github.com/OpenTideHQ/opentide/releases/tag/v0.12.0)
+- [CHANGELOG](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md)
+
+## 0.11.0 — 7 October 2026
+
+Minor on 0.10.0. **Bare `validate query` no longer scans.** `--live` is the tenant check. Regenerate CI with `opentide setup ci` so generated pipelines pass `--live` and pin this release. Regenerate schemas with `opentide generate` so optional vocabulary lists include `items.enum`.
+
+**Install**
+
+```bash
+pip install opentide==0.11.0
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+**What changes for authors and scripts**
+
+- Bare `opentide validate query` exits 1 and tells you to re-run with `--live`. It does not scan query text ([#456](https://github.com/OpenTideHQ/opentide/issues/456)).
+- `--live` checks the tenant. A missing SDK or plan is a failed live check. CrowdStrike and HarfangLab stay unsupported.
+- Generated CI passes `--live` and skips a platform when its credential variables are empty. Re-run `opentide setup ci`.
+- MCP `validate_query` refuses unless `live` is true.
+- Optional vocabulary lists in generated schemas include `items.enum` ([#450](https://github.com/OpenTideHQ/opentide/issues/450)).
+- `opentide generate schemas templates vocabs snippets` runs those phases in one invocation ([#455](https://github.com/OpenTideHQ/opentide/issues/455)).
+
+**Links**
+
+- [PyPI](https://pypi.org/project/opentide/0.11.0/)
+- [GitHub Release](https://github.com/OpenTideHQ/opentide/releases/tag/v0.11.0)
+- [CHANGELOG](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md)
+
+## 0.10.0 — 6 October 2026
+
+Minor on 0.9.0. **Upgrade and regenerate schemas** with `opentide generate`. Technique lists are `mitre_attack`. Signal log sources come from `visibility.toml`. Signal severity uses alert labels. Regenerate CI with `opentide setup ci` so the install pin is exact. A root `composition` block is still accepted and is no longer required.
+
+**Install**
+
+```bash
+pip install opentide==0.10.0
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+**What changes for authors and scripts**
+
+- Threat and objective technique lists are `mitre_attack`, pinned to `att&ck::1.1`. Actor values stay scoped (`att&ck::G0007`).
+- `objective.composition` is the required composition block. Templates emit it once.
+- `signals[].data.logsources` are names from `visibility.toml`.
+- Signal `severity` is `Informational`, `Low`, `Medium`, `High`, or `Critical`.
+- `detection_model` may be an objective UUID or a signal UUID.
+- HTTP proxy configuration is `opentide --proxy http://[user:pass@]host:port`.
+- `opentide info --strict` exits non-zero when an object file failed to load.
+
+**Links**
+
+- [PyPI](https://pypi.org/project/opentide/0.10.0/)
+- [GitHub Release](https://github.com/OpenTideHQ/opentide/releases/tag/v0.10.0)
+- [CHANGELOG](https://github.com/OpenTideHQ/opentide/blob/development/CHANGELOG.md)
+
 ## 0.9.0 — 5 October 2026
 
 Minor on 0.8.2. **Upgrade and regenerate schemas** with `opentide generate` so `rule::1.1` can record `metadata.reviewed` and technique and logsource checks use `att&ck::1.1` and `datasources::1.1`. `opentide rules unreviewed` lists rules with no review, or a review older than the window. It does not require regenerating CI.

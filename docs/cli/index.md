@@ -9,7 +9,7 @@ icon: Terminal
 The `opentide` command is a [Typer](https://typer.tiangolo.com/) application included in the core package:
 
 ```bash
-pip install 'opentide==0.9.0'
+pip install 'opentide==0.12.1'
 ```
 
 Run `opentide --help` for the live command tree.
@@ -27,6 +27,7 @@ Run `opentide --help` for the live command tree.
 | [`deploy`](./deploy.md) | Platform rule deployment |
 | [`share`](./share.md) | Publish objects to a MISP destination |
 | [`info`](./info.md) | Repository and platform statistics |
+| [`mcp`](../mcp/index.md) | Stdio MCP server (`mcp start`); the editor owns the process |
 
 <Callout type="info">
 
@@ -51,7 +52,7 @@ All commands inherit [global options](./global-options.md):
 ```bash
 opentide generate
 opentide --json validate --strict
-opentide validate query --platform sentinel
+opentide validate query --platform sentinel --live
 opentide lint --strict
 opentide deploy --platform sentinel --dry-run
 ```

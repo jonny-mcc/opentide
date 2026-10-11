@@ -83,14 +83,10 @@ azure_client_secret = "$AZURE_CLIENT_SECRET"
 Exact connection keys differ per platform. Use `opentide info --platform <name>` to see what a platform expects, and never commit real secrets — see [CI/CD](./workflows/ci-cd.md#secrets) for injecting them in pipelines.
 </Callout>
 
-If you sit behind an outbound proxy, configure it in `deployment.toml`:
+If you sit behind an outbound proxy, pass it on the command. A passed flag wins over `HTTP_PROXY` and `HTTPS_PROXY`. Omitting the flag leaves those variables as they are. The same retirement covers platform tenant config, not only `[cve].proxy`: a `proxy` key under `[tenants.setup]` or in `deployment.toml` `[proxy]` fails the command and names `opentide --proxy`.
 
-```toml
-[proxy]
-proxy_host = "proxy.internal"
-proxy_port = 8080
-proxy_user = "${PROXY_USER}"          # optional; enables authenticated proxy
-proxy_password = "${PROXY_PASSWORD}"
+```bash
+opentide --proxy http://user:pass@proxy.internal:8080 validate --strict
 ```
 
 ## Deployment statuses and strategies
@@ -137,7 +133,7 @@ There is no separate promote command. Edit a rule's `status` in YAML for deliber
 
 ## Deployment plan
 
-The `DEPLOYMENT_PLAN` environment variable selects which plan `deploy` and `validate query --live` operate under, letting you keep separate plans (e.g. per environment) without editing config. The default offline `validate query` grades every rule's query text and ignores the plan:
+The `DEPLOYMENT_PLAN` environment variable selects which plan `deploy` and `validate query --live` operate under, letting you keep separate plans (e.g. per environment) without editing config. A bare `validate query` refuses and does not read the plan:
 
 ```bash
 export DEPLOYMENT_PLAN=production

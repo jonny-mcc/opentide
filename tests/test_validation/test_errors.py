@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -117,7 +118,7 @@ def _threat_error(metadata: dict[str, Any], **threat: Any) -> ValidationError:
         "viability": "Likely",
         "terrain": "Endpoint workstations.",
         "surface": ["Windows::Desktop"],
-        "att&ck": ["T1059"],
+        "mitre_attack": ["T1059"],
     }
     payload = {
         "name": "Threat",
@@ -286,16 +287,84 @@ def test_format_issues_for_console_groups_by_file() -> None:
     output = format_issues_for_console(issues)
     assert "## u1" in output
     assert "## /tmp/rule.yaml" in output
+    assert "  [error] global issue" in output
     assert "suggestion: Better Name" in output
 
 
+def test_format_issues_for_console_prints_file_line_when_yaml_line_is_set() -> None:
+    issues = [
+        ValidationIssue(
+            code="x",
+            file_path=Path("/tmp/rule.yaml"),
+            field_path=("metadata", "name"),
+            message="bad name",
+            yaml_line=0,
+        ),
+    ]
+    output = format_issues_for_console(issues)
+    assert "## /tmp/rule.yaml" in output
+    assert "  [error] /tmp/rule.yaml:1: metadata.name: bad name" in output
+
+
 def test_attach_yaml_lines_without_ruamel(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing ruamel install leaves yaml_line unset, even if the module was imported."""
+    import ruamel.yaml  # noqa: F401 — full-suite order already loaded this module
+
     issue = ValidationIssue(code="x", field_path=("name",), message="bad")
     yaml_path = tmp_path / "rule.yaml"
     yaml_path.write_text("name: x\n", encoding="utf-8")
-    monkeypatch.setitem(__import__("sys").modules, "ruamel", None)
+    monkeypatch.setitem(sys.modules, "ruamel", None)
+    monkeypatch.setitem(sys.modules, "ruamel.yaml", None)
     result = attach_yaml_lines([issue], {"name": "x"}, file_path=yaml_path)
     assert result[0].yaml_line is None
+
+
+def test_attach_yaml_lines_follows_a_list_index(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "threat.yaml"
+    yaml_path.write_text(
+        "metadata:\n  uuid: x\nthreat:\n  actors:\n    - att&ck::G0001\n",
+        encoding="utf-8",
+    )
+    issue = ValidationIssue(
+        code="vocab",
+        field_path=("threat", "actors", "0"),
+        message="unknown actor",
+    )
+    result = attach_yaml_lines([issue], {}, file_path=yaml_path)
+    assert result[0].yaml_line is not None
+    assert result[0].file_path == yaml_path
+    text = yaml_path.read_text(encoding="utf-8").splitlines()
+    assert "att&ck::G0001" in text[result[0].yaml_line]
+
+
+def test_attach_yaml_lines_follows_a_scalar_field(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "threat.yaml"
+    yaml_path.write_text(
+        "threat:\n  chaining:\n    - relation: sequence::preceeds\n",
+        encoding="utf-8",
+    )
+    issue = ValidationIssue(
+        code="vocab",
+        field_path=("threat", "chaining", "0", "relation"),
+        message="unknown relation",
+    )
+    result = attach_yaml_lines([issue], {}, file_path=yaml_path)
+    assert result[0].yaml_line is not None
+    text = yaml_path.read_text(encoding="utf-8").splitlines()
+    assert "sequence::preceeds" in text[result[0].yaml_line]
+
+
+def test_attach_yaml_lines_keeps_an_existing_line(tmp_path: Path) -> None:
+    yaml_path = tmp_path / "rule.yaml"
+    yaml_path.write_text("name: x\n", encoding="utf-8")
+    issue = ValidationIssue(
+        code="x",
+        field_path=("missing",),
+        message="bad",
+        yaml_line=4,
+    )
+    result = attach_yaml_lines([issue], {}, file_path=yaml_path)
+    assert result[0].yaml_line == 4
 
 
 def test_attach_yaml_lines_missing_file() -> None:

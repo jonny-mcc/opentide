@@ -1,7 +1,6 @@
 from datetime import timedelta
 from azure.mgmt.securityinsight import SecurityInsights
 from azure.identity import ClientSecretCredential
-from opentide.deployment import Proxy
 from opentide.models.system_config import ConfigurationModels
 import structlog
 logger = structlog.get_logger('opentide.platforms.sentinel.client')
@@ -10,12 +9,16 @@ class SentinelService:
 
     def __init__(self, tenant_config: ConfigurationModels.Systems.Sentinel.Tenant):
         self.setup = tenant_config.setup
-        if self.setup.proxy:
-            Proxy.set_proxy()
-        else:
-            Proxy.unset_proxy()
 
     def connect(self) -> SecurityInsights:
+        from opentide.core.environment import reject_unsubstituted_placeholders
+        reject_unsubstituted_placeholders(
+            self.setup.azure_tenant_id,
+            self.setup.azure_client_id,
+            self.setup.azure_client_secret,
+            self.setup.azure_subscription_id,
+            client='Azure',
+        )
         credentials = ClientSecretCredential(self.setup.azure_tenant_id, self.setup.azure_client_id, self.setup.azure_client_secret)
         client = SecurityInsights(credentials, self.setup.azure_subscription_id, connection_verify=self.setup.ssl)
         return client

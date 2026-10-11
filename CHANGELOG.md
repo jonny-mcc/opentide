@@ -6,6 +6,125 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Ver
 
 ## [Unreleased]
 
+## [0.12.1] — 2026-10-09
+
+Patch on 0.12.0. A missing credential is logged once, not once per object. Re-run `opentide setup ci` so a live query job guards only the `$VAR` names in that platform file and exits 2 when one of them is unset.
+
+### Fixed
+
+- `fetch_config_envvar` reports each unset configuration variable once per process. The live check still ends on the FATAL panel that names those variables.
+- Generated CI no longer treats every `$VAR` in the bundled platform sample as required. The guard reads the enabled platform file, ignores comments and literals, and exits 2 on a skip. Exit 0 means the tenant check ran.
+
+### Install
+
+```bash
+pip install opentide==0.12.1
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+## [0.12.0] — 2026-10-09
+
+Minor on 0.11.0. The `opentide-mcp` console script is gone. The stdio server is `opentide mcp start`. Regenerate editor config with `opentide setup mcp`. Re-run `opentide setup ci` so a live query job runs only when every required credential variable is set. Regenerate schemas with `opentide generate` so object lists such as `threat.chaining` are not given a string vocabulary enum.
+
+### Removed
+
+- The `opentide-mcp` console script. The stdio server is `opentide mcp start`. There is no alias ([#460](https://github.com/OpenTideHQ/opentide/issues/460)).
+
+### Changed
+
+- `opentide setup mcp` writes `command: opentide` and `args: ["mcp", "start"]`. `opentide mcp` with no subcommand prints help and exits. The editor owns stop and reload ([#460](https://github.com/OpenTideHQ/opentide/issues/460)).
+
+### Fixed
+
+- Splunk `[[modifiers]]` loads as an array of tables. A config `ValueError` during engine load is no longer reported only as a missing `declare` ([#466](https://github.com/OpenTideHQ/opentide/issues/466)).
+- Generated schemas no longer put a string vocabulary enum on `threat.chaining` items or on the array node. `list[str]` vocabulary fields still get `items.enum` ([#468](https://github.com/OpenTideHQ/opentide/issues/468)).
+- Stage-prefix suggestions strip using the field name, including when the caller passes `surface::1.0`. MISP actor UUIDs still get no suggestion ([#467](https://github.com/OpenTideHQ/opentide/issues/467)).
+- A retired `[tenants.setup] proxy` key fails the live query check with a message naming `opentide --proxy`. That retirement covers platform tenant config, not only `[cve].proxy` ([#469](https://github.com/OpenTideHQ/opentide/issues/469)).
+- `--live` fails when a credential is still an unsubstituted `$VARIABLE`. Generated CI runs that job only when every required credential variable is set ([#471](https://github.com/OpenTideHQ/opentide/issues/471)).
+- Validate findings for vocabulary and cross-object checks record `yaml_line`, including list indexes such as `actors[0]`. Lint findings are unchanged ([#470](https://github.com/OpenTideHQ/opentide/issues/470)).
+
+### Install
+
+```bash
+pip install opentide==0.12.0
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+## [0.11.0] — 2026-10-07
+
+Minor on 0.10.0. Bare `validate query` no longer scans. `--live` is the tenant check. Regenerate CI with `opentide setup ci` so generated pipelines pass `--live` and pin this release. Regenerate schemas with `opentide generate` so optional vocabulary lists include `items.enum`.
+
+### Added
+
+- `opentide generate` accepts `schemas`, `templates`, `vocabs`, and `snippets` together and runs them in that order. `docs`, `exports`, `extract`, and `inflight` stay subcommands ([#455](https://github.com/OpenTideHQ/opentide/issues/455)).
+- The bundled actors vocabulary matches the specifications snapshot refreshed from the live MISP galaxy ([specifications#34](https://github.com/OpenTideHQ/specifications/issues/34)).
+
+### Changed
+
+- Bare `opentide validate query` refuses and names `--live`. It does not scan query text. `--live` checks the tenant. A missing SDK or plan fails that check. CrowdStrike and HarfangLab stay `supported: false` ([#456](https://github.com/OpenTideHQ/opentide/issues/456)).
+- Generated GitHub, GitLab, and Azure pipelines pass `--live` and skip a platform when every credential variable for that platform is empty ([#456](https://github.com/OpenTideHQ/opentide/issues/456)).
+- MCP `validate_query` refuses unless `live` is true. `live: true` checks the catalogue rules for the platform against the tenant ([#456](https://github.com/OpenTideHQ/opentide/issues/456)).
+- Generated schemas stamp `items.enum` on optional vocabulary lists and on each branch of a string-or-list union ([#450](https://github.com/OpenTideHQ/opentide/issues/450)).
+
+### Fixed
+
+- Validation findings print `file:line` when `yaml_line` is set ([#451](https://github.com/OpenTideHQ/opentide/issues/451)).
+- `validate --check` returns only that check's issues. Parse findings belong to the schema check ([#452](https://github.com/OpenTideHQ/opentide/issues/452)).
+- Unknown `sharing.toml` keys name `[[misp]]` ([#453](https://github.com/OpenTideHQ/opentide/issues/453)).
+- Surface suggestions try the exact de-prefixed key before difflib ([#454](https://github.com/OpenTideHQ/opentide/issues/454)).
+
+### Install
+
+```bash
+pip install opentide==0.11.0
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
+## [0.10.0] — 2026-10-06
+
+Minor on 0.9.0. Upgrade, rename technique lists to `mitre_attack`, and regenerate schemas with `opentide generate`. Regenerate CI with `opentide setup ci` so the install pin is exact. A root `composition` block is still accepted and is no longer required.
+
+### Added
+
+- `opentide --proxy http://[user:pass@]host:port` sets `HTTP_PROXY` and `HTTPS_PROXY` for that process. A passed flag wins over the existing environment. Omitting the flag leaves the environment as it is.
+- `python -m opentide` and `python -m opentide.mcp_server` start the CLI and the MCP server.
+- `opentide info` prints how many object files failed to load. `--strict` exits non-zero when that count is not zero.
+- `opentide migrate objects` moves `Models Library/Threat Vector Models`, `Models Library/Detection Objectives`, and `Models Library/Managed Detection Rules`, and object folders named in `Configurations/global.toml`.
+
+### Changed
+
+- Threat and objective technique lists are `mitre_attack`, pinned to `att&ck::1.1`. `att&ck` and `attack` are not accepted. Actor values stay scoped (`att&ck::G0007`).
+- `objective.composition` is required. A root `composition` block is accepted and ignored. Templates emit the block once, under `objective`.
+- `signals[].data.logsources` come from workspace `visibility.toml`. The `datasources` pin on that field is gone.
+- Signal `severity` uses `alert_severity::1.0` (`Informational` through `Critical`). Threat `severity` stays the incident vocabulary.
+- `detection_model` accepts an objective UUID or a signal UUID.
+- `VisibilityAsset.custom_details` accepts strings, booleans, and numbers.
+- Sentinel generated schema no longer requires `grouping` or `entities`.
+- `surface` and `signal.entities` descriptions say stages group keys. Authored values are not prefixed with the stage id.
+- `opentide setup ci` installs `opentide==<installed version>`.
+
+### Fixed
+
+- Vocabulary extensions are looked up by field name, so a `schema.toml` extension applies during validation.
+- `opentide lint` reports an unreadable file instead of crashing.
+- `opentide setup vscode` accepts JSONC comments and trailing commas, and names the file when the JSON is still invalid.
+- Duplicate YAML keys are rejected with the key and line.
+- An unreadable object file is logged separately from malformed YAML.
+- Legacy `tvm`, `dom`, `mdr`, and `cdm` object types in `Configurations/global.toml` raise an error that names the rename and tells you to delete that file.
+- Unknown vocabulary values that are a UUID or `misp::<uuid>` do not get a "did you mean" suggestion.
+- A leftover `[proxy]`, `[cve].proxy`, or tenant `setup.proxy` key is an error that names `--proxy`.
+
+### Install
+
+```bash
+pip install opentide==0.10.0
+export OPENTIDE_REPO_ROOT=/path/to/detection-repo
+opentide validate --strict
+```
+
 ## [0.9.0] — 2026-10-05
 
 Minor on 0.8.2. Upgrade and regenerate schemas with `opentide generate` so `rule::1.1` can record `metadata.reviewed` and technique and logsource checks use `att&ck::1.1` and `datasources::1.1`. `opentide rules unreviewed` lists rules with no review, or a review older than the window. It does not require regenerating CI.
@@ -631,7 +750,11 @@ export OPENTIDE_REPO_ROOT=/path/to/detection-repo
 opentide validate --strict
 ```
 
-[Unreleased]: https://github.com/OpenTideHQ/opentide/compare/v0.9.0...HEAD
+[Unreleased]: https://github.com/OpenTideHQ/opentide/compare/v0.12.1...HEAD
+[0.12.1]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.12.1
+[0.12.0]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.12.0
+[0.11.0]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.11.0
+[0.10.0]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.10.0
 [0.9.0]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.9.0
 [0.8.2]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.8.2
 [0.8.1]: https://github.com/OpenTideHQ/opentide/releases/tag/v0.8.1

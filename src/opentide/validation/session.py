@@ -119,7 +119,9 @@ def run_validation(
     }
 
     parse_errors = index.get("parse_errors", [])
-    parse_issues = _yaml_parse_issues(parse_errors, scope)
+    # yaml_parse belongs to schema. A named check such as cve must not fail
+    # because an unrelated object file failed to parse.
+    parse_issues = _yaml_parse_issues(parse_errors, scope) if ValidateCheck.schema in checks else []
     issues.extend(parse_issues)
     indexed_parse_failures = frozenset(
         _resolved_str(entry["path"]) for entry in parse_errors if entry.get("path")
@@ -362,6 +364,10 @@ def _validate_work_item(
         issues.extend(check_references_for_object(item.uuid, item.object_type, item.body, graph))
         if item.object_type == "threat":
             issues.extend(check_chaining_for_object(item.uuid, item.body, graph))
+
+    if file_path is not None:
+        issues = attach_yaml_lines(issues, item.body, file_path=file_path)
+        warnings = attach_yaml_lines(warnings, item.body, file_path=file_path)
 
     return issues, warnings
 

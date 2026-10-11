@@ -16,7 +16,7 @@ Want to author objects from scratch and understand each step? Do the [Tutorial](
 ### Install and point at your repo
 
 ```bash
-pip install 'opentide==0.9.0'
+pip install 'opentide==0.12.1'
 export OPENTIDE_REPO_ROOT=/path/to/detection-repo
 ```
 
@@ -61,10 +61,10 @@ opentide validate --strict   # warnings also fail (exit 1) — use in CI
 
 On success the process exits `0`. For structured detail add `--json`, which writes one result document to stdout (see [Exit codes](../cli/exit-codes.md)). If validation fails, see [Troubleshooting](./troubleshooting.md).
 
-Validate a single platform query language:
+Check a platform's catalogue queries against the tenant. This needs the matching extra and credentials. Without `--live` the command exits `1` and names the flag:
 
 ```bash
-opentide validate query --platform sentinel
+opentide validate query --platform sentinel --live
 ```
 
 </Step>

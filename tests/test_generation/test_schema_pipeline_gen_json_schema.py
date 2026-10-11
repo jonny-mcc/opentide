@@ -13,9 +13,22 @@ def test_gen_json_schema_resolves_logsources_array() -> None:
         sp.VocabularyResolver.Logsources,
         "resolve",
         return_value=(["sentinel::logs"], ["Log source"]),
-    ):
+    ) as resolve:
         result = sp.gen_json_schema(schema)
     assert result["sources"]["items"]["enum"] == ["sentinel::logs"]
+    resolve.assert_called_once_with(qualified=True)
+
+
+def test_gen_json_schema_resolves_logsource_names() -> None:
+    schema = {"sources": {"type": "array", "tide.config.visibility.logsource-names": True}}
+    with patch.object(
+        sp.VocabularyResolver.Logsources,
+        "resolve",
+        return_value=(["Placeholder Logsource"], ["Log source"]),
+    ) as resolve:
+        result = sp.gen_json_schema(schema)
+    assert result["sources"]["items"]["enum"] == ["Placeholder Logsource"]
+    resolve.assert_called_once_with(qualified=False)
 
 
 def test_gen_json_schema_resolves_detectors_string() -> None:
@@ -84,6 +97,110 @@ def test_gen_json_schema_resolves_tide_vocab_string() -> None:
     ):
         result = sp.gen_json_schema(schema)
     assert result["severity"]["enum"] == ["High"]
+
+
+def test_gen_json_schema_stamps_items_enum_on_optional_vocab_list() -> None:
+    schema = {
+        "mitre_attack": {
+            "anyOf": [
+                {"type": "array", "items": {"type": "string"}},
+                {"type": "null"},
+            ],
+            "tide.vocab": "att&ck",
+        }
+    }
+    with patch.object(
+        sp.VocabularyResolver.Vocabulary,
+        "resolve",
+        return_value=(["T1003"], ["OS Credential Dumping"]),
+    ):
+        result = sp.gen_json_schema(schema)
+    array_alt = result["mitre_attack"]["anyOf"][0]
+    assert array_alt["items"]["enum"] == ["T1003"]
+    assert array_alt["items"]["markdownEnumDescriptions"] == ["OS Credential Dumping"]
+    assert array_alt["uniqueItems"] is True
+    assert "enum" not in result["mitre_attack"]
+    assert result["mitre_attack"]["anyOf"][1] == {"type": "null"}
+
+
+def test_gen_json_schema_stamps_string_and_array_union() -> None:
+    schema = {
+        "killchain": {
+            "anyOf": [
+                {"type": "string"},
+                {"type": "array", "items": {"type": "string"}},
+                {"type": "null"},
+            ],
+            "tide.vocab": "killchain",
+        }
+    }
+    with patch.object(
+        sp.VocabularyResolver.Vocabulary,
+        "resolve",
+        return_value=(["Reconnaissance"], ["Reconnaissance"]),
+    ):
+        result = sp.gen_json_schema(schema)
+    assert "enum" not in result["killchain"]
+    assert result["killchain"]["anyOf"][0]["enum"] == ["Reconnaissance"]
+    assert result["killchain"]["anyOf"][1]["items"]["enum"] == ["Reconnaissance"]
+    assert result["killchain"]["anyOf"][1]["uniqueItems"] is True
+    assert result["killchain"]["anyOf"][2] == {"type": "null"}
+
+
+def test_gen_json_schema_does_not_stamp_string_enum_on_object_list() -> None:
+    """``threat.chaining`` is a list of objects. A string enum on items is wrong (#468)."""
+    items = {
+        "type": "object",
+        "properties": {
+            "relation": {"type": "string"},
+            "vector": {"type": "string"},
+            "description": {"type": "string"},
+        },
+    }
+    schema = {
+        "chaining": {
+            "anyOf": [
+                {"type": "array", "items": dict(items)},
+                {"type": "null"},
+            ],
+            "tide.vocab": "chaining_relations",
+        }
+    }
+    with patch.object(
+        sp.VocabularyResolver.Vocabulary,
+        "resolve",
+        return_value=(["preceeds"], ["Preceeds"]),
+    ):
+        result = sp.gen_json_schema(schema)
+    assert "enum" not in result["chaining"]
+    array_alt = result["chaining"]["anyOf"][0]
+    assert "enum" not in array_alt
+    assert array_alt["items"]["type"] == "object"
+    assert "enum" not in array_alt["items"]
+    assert array_alt["items"]["properties"]["relation"] == {"type": "string"}
+    assert result["chaining"]["anyOf"][1] == {"type": "null"}
+
+
+def test_gen_json_schema_stamps_items_enum_on_oneof_vocab_list() -> None:
+    schema = {
+        "mitre_attack": {
+            "oneOf": [
+                {"type": "null"},
+                {"type": "array", "items": {"type": "string"}},
+            ],
+            "tide.vocab": "att&ck",
+        }
+    }
+    with patch.object(
+        sp.VocabularyResolver.Vocabulary,
+        "resolve",
+        return_value=(["T1003"], ["OS Credential Dumping"]),
+    ):
+        result = sp.gen_json_schema(schema)
+    array_alt = result["mitre_attack"]["oneOf"][1]
+    assert array_alt["items"]["enum"] == ["T1003"]
+    assert array_alt["uniqueItems"] is True
+    assert "enum" not in result["mitre_attack"]
 
 
 def test_gen_json_schema_resolves_tide_vocab_array() -> None:

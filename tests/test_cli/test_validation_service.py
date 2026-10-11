@@ -269,24 +269,64 @@ def test_validate_query_platform_runs_validator(monkeypatch) -> None:
     assert result["mode"] == "live"
 
 
-def test_validate_query_platform_is_offline_by_default(monkeypatch) -> None:
-    """Issue #239: the default path must not touch the deployment plan at all."""
+def test_validate_query_platform_fails_on_unsubstituted_credentials() -> None:
+    """A ValueError from the validator fails the check and does not retry as TypeError."""
+    ctx = CliContext(json_output=True)
+    validator = MagicMock()
+    validator.validate.side_effect = ValueError(
+        "Azure credentials are unset ($AZURE_TENANT_ID). "
+        "Set those environment variables before a live check."
+    )
+    with (
+        patch("opentide.deployment.make_deploy_plan", return_value={"sentinel": ["u1"]}),
+        patch("opentide.deployment.DeploymentStrategy.load_from_environment"),
+        patch("opentide.platforms.plugins.DeployTide") as mock_tide,
+        patch("opentide.core.registry.OpenTide") as mock_ot,
+    ):
+        mock_tide.return_value.query_validation_for.return_value = {"sentinel": validator}
+        mock_ot.Configurations.Systems.Index = {"sentinel": {"tide": {"name": "Sentinel"}}}
+        result = validation_service.validate_query_platform(ctx, "sentinel", live=True)
+    assert result["status"] == "failed"
+    assert result["_exit_code"] == 1
+    assert result["mode"] == "live"
+    assert "$AZURE_TENANT_ID" in str(result["message"])
+    assert validator.validate.call_count == 1
+
+
+def test_validate_query_platform_surfaces_retired_tenant_proxy() -> None:
+    """A config ValueError from engine load is the check result, not a traceback."""
+    ctx = CliContext(json_output=True)
+    message = (
+        "platforms/splunk.toml [[tenants]]: The proxy key is retired. "
+        "Pass the URL with `opentide --proxy http://[user:pass@]host:port`."
+    )
+    with (
+        patch("opentide.deployment.make_deploy_plan", return_value={"splunk": ["u1"]}),
+        patch("opentide.deployment.DeploymentStrategy.load_from_environment"),
+        patch("opentide.platforms.plugins.DeployTide") as mock_tide,
+    ):
+        mock_tide.return_value.query_validation_for.side_effect = ValueError(message)
+        result = validation_service.validate_query_platform(ctx, "splunk", live=True)
+    assert result["status"] == "failed"
+    assert result["supported"] is True
+    assert result["_exit_code"] == 1
+    assert result["mode"] == "live"
+    assert "opentide --proxy" in str(result["message"])
+
+
+def test_validate_query_platform_refuses_without_live() -> None:
+    """A bare call names ``--live`` and does not build a deployment plan."""
     ctx = CliContext(json_output=True)
 
     def _explode(*args: object, **kwargs: object) -> None:
-        raise AssertionError("offline validation must not build a deployment plan")
+        raise AssertionError("a bare validate query must not build a deployment plan")
 
-    with (
-        patch("opentide.deployment.make_deploy_plan", side_effect=_explode),
-        patch.object(
-            validation_service,
-            "_offline_query_result",
-            return_value={"status": "passed", "mode": "offline-syntax"},
-        ) as offline,
-    ):
+    with patch("opentide.deployment.make_deploy_plan", side_effect=_explode):
         result = validation_service.validate_query_platform(ctx, "sentinel")
-    offline.assert_called_once_with("sentinel")
-    assert result["mode"] == "offline-syntax"
+    assert result["status"] == "failed"
+    assert result["supported"] is True
+    assert "--live" in str(result["message"])
+    assert "mode" not in result
 
 
 def test_validate_query_live_without_tenants_fails_before_loading_a_validator(

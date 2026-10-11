@@ -37,7 +37,7 @@ Steps:
    - Orchestration/generate.py → opentide generate
    - Orchestration/document.py → opentide generate docs [--output docs] [--flavor github]
    - Orchestration/deploy.py → opentide deploy
-   - Query validation: opentide validate query --platform <sentinel|defender_for_endpoint|splunk|sentinel_one|carbon_black_cloud>
+   - Query validation: opentide validate query --live --platform <sentinel|defender_for_endpoint|splunk|sentinel_one|carbon_black_cloud>
 
 4. Repository layout
    - Run `opentide migrate objects` (dry-run) then `opentide migrate objects --apply` when Configurations/ or Objects/ still use CoreTide names.
@@ -47,7 +47,7 @@ Steps:
 5. CI/CD
    - Remove submodules: recursive checkout.
    - Regenerate pipeline: opentide setup ci github (or gitlab/azure).
-   - Typical job order: pip install 'opentide==0.9.0' → opentide validate → validate query per enabled platform → opentide generate → opentide generate docs --output docs → deploy stages.
+   - Typical job order: pip install 'opentide==0.12.1' → opentide validate → validate query --live per enabled platform → opentide generate → opentide generate docs --output docs → deploy stages.
    - Do not reference opentide mutate or top-level opentide document/export/extract (use generate docs/exports/extract). Use `opentide migrate objects` only for directory layout.
 
 6. Agents and IDE
@@ -56,7 +56,7 @@ Steps:
    - Remove references to vendored detection-ops skill packs.
 
 7. Verification checklist
-   - pip install 'opentide==0.9.0' succeeds
+   - pip install 'opentide==0.12.1' succeeds
    - opentide validate --strict passes
    - opentide generate completes
    - CI YAML contains no CoreTide checkout or python Orchestration/*.py

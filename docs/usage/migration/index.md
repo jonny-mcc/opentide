@@ -25,7 +25,7 @@ python Orchestration/validate.py
 ### After (pip package)
 
 ```toml
-dependencies = ["opentide==0.9.0"]
+dependencies = ["opentide==0.12.1"]
 ```
 
 ```python
@@ -38,7 +38,7 @@ rule.deploy("sentinel")
 
 ```bash
 opentide validate --strict
-opentide validate query --platform sentinel
+opentide validate query --platform sentinel --live
 ```
 
 Use `--platform`, not legacy `--system`.
@@ -48,7 +48,7 @@ Use `--platform`, not legacy `--system`.
 ### 1. Install
 
 ```bash
-pip install 'opentide==0.9.0'
+pip install 'opentide==0.12.1'
 ```
 
 Enable platforms in the repo (not at pip install time):
@@ -57,7 +57,7 @@ Enable platforms in the repo (not at pip install time):
 opentide setup platforms --sentinel --splunk --yes
 ```
 
-Optional MCP server setup: `opentide setup mcp --cursor --yes` (after `pip install 'opentide==0.9.0'`).
+Optional MCP server setup: `opentide setup mcp --cursor --yes` (after `pip install 'opentide==0.12.1'`).
 
 ### 2. Remove submodule
 
@@ -103,7 +103,7 @@ Query validation: **five platforms only** (no CrowdStrike/HarfangLab).
 Remove `submodules: recursive`. Add:
 
 ```yaml
-- run: pip install 'opentide==0.9.0'
+- run: pip install 'opentide==0.12.1'
 - run: opentide validate --strict
   env:
     OPENTIDE_REPO_ROOT: ${{ github.workspace }}
@@ -121,8 +121,19 @@ opentide setup skills --generic --yes
 Or configure manually:
 
 ```json
-{ "mcpServers": { "opentide": { "command": "opentide-mcp", "env": { "OPENTIDE_REPO_ROOT": "${workspaceFolder}" } } } }
+{ "mcpServers": { "opentide": { "command": "opentide", "args": ["mcp", "start"], "env": { "OPENTIDE_REPO_ROOT": "${workspaceFolder}" } } } }
 ```
+
+## 0.10.0 authoring changes
+
+- One `objective.composition` block, inside `objective`. A root `composition` block is still accepted and is not required.
+- Technique lists are `mitre_attack` on threats and objectives. `att&ck` and `attack` are not accepted. Actor values stay scoped (`att&ck::G0007`).
+- `surface` and `signal.entities` values are the key names. Stages group those keys. Do not prefix a value with `<stage>::`.
+- `signals[].data.logsources` are names from `visibility.toml`, not ATT&CK data sources.
+- Signal `severity` uses alert labels (`Informational` through `Critical`), including `Medium`. Threat `severity` stays the incident vocabulary.
+- HTTP proxy configuration is `opentide --proxy http://[user:pass@]host:port`. `[proxy]`, `[cve].proxy`, and tenant `setup.proxy` are errors.
+- `opentide generate docs` writes `docs/`. Wiki publishing is gone.
+- `opentide migrate objects` also moves `Models Library/Threat Vector Models`, `Models Library/Detection Objectives`, and `Models Library/Managed Detection Rules`, plus object folders named in `Configurations/global.toml`.
 
 ## Layout migration
 
@@ -148,7 +159,7 @@ Replacing a CoreTide **git submodule**, Orchestration scripts, and Python import
 
 ## Verification checklist
 
-- [ ] `pip install 'opentide==0.9.0'` succeeds
+- [ ] `pip install 'opentide==0.12.1'` succeeds
 - [ ] `OPENTIDE_REPO_ROOT` set
 - [ ] `opentide validate --strict` passes
 - [ ] CI no longer uses submodule

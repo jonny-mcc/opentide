@@ -165,9 +165,14 @@ def strip_vocab_stage_prefix(vocab: str, identifier: str) -> str:
     prefix in VOCAB_INDEX, but callers may supply stage-prefixed values
     such as ``OS::Windows::Desktop``.  This helper returns the key as it
     appears in the index (``Windows::Desktop``).
+
+    ``VOCAB_INDEX`` is keyed by field name (``surface``). Callers such as
+    ``suggest()`` pass the versioned contract (``surface::1.0``). The lookup
+    uses the field name.
     """
-    if "::" in identifier and vocab in VOCAB_INDEX:
-        stages = VOCAB_INDEX[vocab].metadata.get("stages") or []
+    index_key = vocab.split("::", 1)[0]
+    if "::" in identifier and index_key in VOCAB_INDEX:
+        stages = VOCAB_INDEX[index_key].metadata.get("stages") or []
         stage_ids = {s["id"] for s in stages if "id" in s}
         first_segment = identifier.split("::")[0]
         if first_segment in stage_ids:
@@ -275,9 +280,7 @@ def parents(id: str) -> list:
             parent for parent in parents if parent and parent not in OpenTide.Models.FlatIndex
         ]
         if missing:
-            raise Exception(
-                f"detection_model {', '.join(missing)} does not exist in the catalogue"
-            )
+            raise Exception(f"detection_model {', '.join(missing)} does not exist in the catalogue")
     return parents
 
 
@@ -416,8 +419,8 @@ def techniques_resolver(model_id: str, recursive=True) -> list:
         else:
             return techniques
     if model_type == "objective":
-        if "att&ck" in model_body["objective"]:
-            techniques = model_body["objective"]["att&ck"]
+        if model_body["objective"].get("mitre_attack"):
+            techniques = model_body["objective"]["mitre_attack"]
         else:
             parent_ids = model_body["objective"].get("threats")
             if recursive:
@@ -426,8 +429,16 @@ def techniques_resolver(model_id: str, recursive=True) -> list:
                         techniques.extend(techniques_resolver(parent_id))
             else:
                 return techniques
+    if model_type == "signal":
+        parent_id = model_body.get("parent")
+        if not parent_id:
+            return []
+        elif recursive:
+            techniques.extend(techniques_resolver(parent_id))
+        else:
+            return techniques
     if model_type == "threat":
-        techniques = model_body["threat"]["att&ck"]
+        techniques = model_body["threat"]["mitre_attack"]
     techniques = list(dict.fromkeys(techniques))
     return techniques
 

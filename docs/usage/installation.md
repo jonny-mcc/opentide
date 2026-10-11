@@ -127,7 +127,7 @@ opentide --help
 
 | Variable | Purpose |
 |----------|---------|
-| `OPENTIDE_REPO_ROOT` | Root of the detection content repository (objects, configurations). See [Repository setup](./repository-setup/) |
+| `OPENTIDE_REPO_ROOT` | Root of the detection content repository (objects, configurations). See [Repository setup](./repository-setup.md) |
 | `OPENTIDE_DATA_ROOT` | Override bundled package data (advanced; defaults to wheel contents) |
 | `DEPLOYMENT_PLAN` | Default deployment plan for `deploy` and `validate query --live` |
 | `DEBUG` | Enable debug logging when set |

@@ -89,3 +89,6 @@ generated/
 
 # Hatch-VCS generated version file
 src/opentide/_version.py
+
+# workshop
+workshop/

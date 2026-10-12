@@ -23,7 +23,7 @@ Install OpenTide into a virtual environment so its dependencies never collide wi
 
 ```bash
 python -m venv .venv
-source .venv/bin/activate        # Windows: .venv\Scripts\activate
+source .venv/bin/activate        # Windows: .venv\Scripts\activate.ps1
 ```
 
 </Tab>
@@ -42,6 +42,10 @@ uv venv
 
 The latest release is **0.12.1** (9 October 2026). The first public release was **0.1.0** (9 September 2026). Notes: [Releases](./releases.md).
 
+<Tabs items={['venv + pip', 'uv']}>
+
+<Tab value="venv + pip">
+
 ```bash
 pip install opentide              # latest on PyPI
 # python -m pip install opentide  # in constrained environments
@@ -54,7 +58,7 @@ pip install 'opentide==0.12.1'     # pin the current release
 
 ```bash
 uv pip install opentide              # latest on PyPI
-uv pip install 'opentide==0.9.0'     # pin the current release
+uv pip install 'opentide==0.12.1'    # pin the current release
 ```
 
 </Tab>

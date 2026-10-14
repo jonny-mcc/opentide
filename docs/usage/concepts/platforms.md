@@ -39,7 +39,6 @@ Every key on `configurations.<platform>`, required and optional, is specified un
   <Card title="Splunk" href="/docs/specifications/specs/platforms/splunk-1.0/" description="SPL saved search, including the splunk::2.x keys that still normalise." />
   <Card title="SentinelOne" href="/docs/specifications/specs/platforms/sentinel-one-1.0/" description="STAR rule: one S1QL query or a correlation of sub-queries." />
   <Card title="Carbon Black Cloud" href="/docs/specifications/specs/platforms/carbon-black-cloud-1.0/" description="Lucene IOC on an existing watchlist report." />
-  <Card title="Elastic Security" href="/docs/specifications/specs/platforms/elastic-1.0/" description="Detection engine rules: query, eql, esql, threshold, new_terms, threat_match, machine_learning." />
   <Card title="CrowdStrike" href="/docs/specifications/specs/platforms/crowdstrike-1.0/" description="Correlation filter. No query validator." />
   <Card title="HarfangLab" href="/docs/specifications/specs/platforms/harfanglab-1.0/" description="Sigma or YARA. No query validator. Sigma wins when both are set." />
 </Cards>

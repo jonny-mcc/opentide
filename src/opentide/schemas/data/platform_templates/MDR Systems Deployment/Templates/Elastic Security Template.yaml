@@ -8,7 +8,7 @@
     #- 
   #contributors:
     #- 
-  #type: query
+  type: query
   #query: |
     #...
   #language: kuery

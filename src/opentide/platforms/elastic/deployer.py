@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 import os
 from collections.abc import Sequence
 from typing import Any
@@ -76,6 +75,21 @@ def _check_rule(
     return True
 
 
+def _write_failed(resp: Any, event: str, rule_id: str, tenant: str) -> bool:
+    """Record a failed Kibana write and return whether it failed.
+
+    RFC 0007 §5: 401 or 403 fails the tenant. Any other error (400, 404, 409,
+    or a 429/5xx that outlived the client's retries) fails only this rule, and
+    the batch continues.
+    """
+    if resp.status_code in (401, 403):
+        raise ElasticTenantError(f"Tenant {tenant} auth error: HTTP {resp.status_code}")
+    if resp.status_code >= 400:
+        _deployment_error(event, rule_id=rule_id, status_code=resp.status_code, error=resp.text)
+        return True
+    return False
+
+
 PRESERVED_FIELDS = (
     "actions",
     "exceptions_list",
@@ -120,10 +134,6 @@ class ElasticDeploy:
         tenant_config: ConfigurationModels.Systems.Elastic.Tenant,
     ) -> None:
         """Process rules for one tenant: delete, disable, create, or update."""
-        if getattr(tenant_config.setup, "bulk_import", False):
-            self._deploy_bulk(batch, client, tenant_config)
-            return
-
         suppression_warned: set[str] = set()
         setup = tenant_config.setup
 
@@ -222,168 +232,58 @@ class ElasticDeploy:
                     _deployment_error("create_elastic_rule_error", rule_id=rule_id, error=str(exc))
                 continue
 
-            if get_resp.status_code == 200:
-                remote = get_resp.json()
-                if _is_prebuilt_rule(remote):
-                    _deployment_error(
-                        "refusing_to_modify_prebuilt_rule",
-                        rule_id=rule_id,
-                        name=rule.name,
-                    )
+            if get_resp.status_code != 200:
+                # 429 and 5xx were already retried by the client. Anything else
+                # fails this rule, never silently (RFC 0007 §5).
+                _deployment_error(
+                    "get_elastic_rule_failed",
+                    rule_id=rule_id,
+                    status_code=get_resp.status_code,
+                    error=get_resp.text,
+                )
+                continue
+
+            remote = get_resp.json()
+            if _is_prebuilt_rule(remote):
+                _deployment_error(
+                    "refusing_to_modify_prebuilt_rule",
+                    rule_id=rule_id,
+                    name=rule.name,
+                )
+                continue
+
+            # Preserve remote fields when not set in authored block
+            for key in PRESERVED_FIELDS:
+                if key not in compiled and key in remote:
+                    compiled[key] = copy.deepcopy(remote[key])
+
+            remote_type = remote.get("type")
+            compiled_type = compiled.get("type")
+
+            if remote_type != compiled_type:
+                # PUT cannot change type: DELETE then POST with the same rule_id
+                # and the preserved fields (RFC 0007 §5, Type changes).
+                logger.info(
+                    "type_change_recreating_elastic_rule",
+                    rule_id=rule_id,
+                    remote_type=remote_type,
+                    new_type=compiled_type,
+                )
+                del_resp = client.delete_rule(rule_id)
+                if del_resp.status_code != 404 and _write_failed(
+                    del_resp, "recreate_elastic_rule_delete_failed", rule_id, tenant_config.name
+                ):
                     continue
-
-                # Preserve remote fields when not set in authored block
-                for key in PRESERVED_FIELDS:
-                    if key not in compiled and key in remote:
-                        compiled[key] = copy.deepcopy(remote[key])
-
-                remote_type = remote.get("type")
-                compiled_type = compiled.get("type")
-
-                if remote_type != compiled_type:
-                    # Type changed: DELETE then POST with same rule_id and preserved fields
-                    logger.info(
-                        "type_change_recreating_elastic_rule",
-                        rule_id=rule_id,
-                        remote_type=remote_type,
-                        new_type=compiled_type,
-                    )
-                    del_resp = client.delete_rule(rule_id)
-                    if del_resp.status_code not in (200, 404):
-                        del_resp.raise_for_status()
-                    post_resp = client.create_rule(compiled)
-                    if post_resp.status_code in (400, 409):
-                        _deployment_error(
-                            "recreate_elastic_rule_failed",
-                            rule_id=rule_id,
-                            status_code=post_resp.status_code,
-                            error=post_resp.text,
-                        )
-                        continue
-                    if post_resp.status_code in (401, 403):
-                        raise RuntimeError(f"Tenant auth error: HTTP {post_resp.status_code}")
-                    post_resp.raise_for_status()
-                else:
-                    # Same type: PUT
-                    logger.info("updating_elastic_rule", rule_id=rule_id, name=rule.name)
-                    put_resp = client.update_rule(compiled)
-                    if put_resp.status_code in (400, 409):
-                        _deployment_error(
-                            "update_elastic_rule_failed",
-                            rule_id=rule_id,
-                            status_code=put_resp.status_code,
-                            error=put_resp.text,
-                        )
-                        continue
-                    if put_resp.status_code in (401, 403):
-                        raise RuntimeError(f"Tenant auth error: HTTP {put_resp.status_code}")
-                    put_resp.raise_for_status()
-
-    def _deploy_bulk(
-        self,
-        batch: Any,
-        client: ElasticClient,
-        tenant_config: ConfigurationModels.Systems.Elastic.Tenant,
-    ) -> None:
-        """Deploy rules using Kibana's multipart NDJSON bulk _import endpoint."""
-        suppression_warned: set[str] = set()
-        setup = tenant_config.setup
-        ndjson_lines: list[str] = []
-
-        for rule in batch.rules:
-            cfg = getattr(rule.configurations, "elastic", None) if rule.configurations else None
-            if not cfg:
-                continue
-
-            rule_id = rule.metadata.uuid if rule.metadata else ""
-            status = cfg.status
-            strategy = check_status(status)
-
-            if strategy is StatusStrategy.INERT:
-                continue
-
-            if strategy is StatusStrategy.DELETION:
-                logger.info("deleting_elastic_rule", rule_id=rule_id, name=rule.name)
-                try:
-                    resp = client.delete_rule(rule_id)
-                    if resp.status_code not in (200, 404):
-                        resp.raise_for_status()
-                except Exception as exc:
-                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    if status_code == 404:
-                        logger.info("delete_elastic_rule_not_found_success", rule_id=rule_id)
-                    elif status_code in (401, 403):
-                        raise
-                    else:
-                        _deployment_error(
-                            "delete_elastic_rule_failed", rule_id=rule_id, error=str(exc)
-                        )
-                continue
-
-            # Active deployment: PREVIEW, RELEASE, or DISABLEMENT
-            if setup.suppression is False and cfg.suppression is not None:
-                if rule_id not in suppression_warned:
-                    _deployment_warning(
-                        "suppression_omitted_basic_license",
-                        rule=rule.name,
-                        rule_id=rule_id,
-                        tenant=tenant_config.name,
-                    )
-                    suppression_warned.add(rule_id)
-
-            block_dict = cfg.model_dump(by_alias=True, exclude_none=False)
-            if not _check_rule(
-                client,
-                block_dict,
-                list(setup.index or []),
-                rule_id=rule_id,
-                rule_name=rule.name,
-            ):
-                continue
-
-            compiled = self.compile_deployment(rule, tenant_config=tenant_config)
-            if strategy is StatusStrategy.DISABLEMENT:
-                compiled["enabled"] = False
+                post_resp = client.create_rule(compiled)
+                if _write_failed(
+                    post_resp, "recreate_elastic_rule_failed", rule_id, tenant_config.name
+                ):
+                    # The old rule is already gone. Say so, so the operator can redeploy.
+                    logger.error("elastic_rule_deleted_not_recreated", rule_id=rule_id)
             else:
-                compiled["enabled"] = True
-
-            if "version" not in compiled:
-                compiled["version"] = getattr(rule.metadata, "version", 1) if rule.metadata else 1
-
-            ndjson_lines.append(json.dumps(compiled, sort_keys=True))
-
-        if ndjson_lines:
-            batch_size = 50
-            for i in range(0, len(ndjson_lines), batch_size):
-                chunk = ndjson_lines[i : i + batch_size]
-                ndjson_payload = "\n".join(chunk)
-                try:
-                    resp = client.import_rules(ndjson_payload, overwrite=True)
-                    success_count = resp.get("success_count", 0)
-                    errors = resp.get("errors", [])
-                    logger.info(
-                        "bulk_import_batch_complete",
-                        batch_index=i // batch_size + 1,
-                        success_count=success_count,
-                        error_count=len(errors),
-                        tenant=tenant_config.name,
-                    )
-                    if errors:
-                        for err in errors:
-                            rid = err.get("rule_id") or err.get("id") or "unknown"
-                            msg = (
-                                err.get("error", {}).get("message")
-                                or err.get("message")
-                                or str(err)
-                            )
-                            _deployment_error("bulk_import_rule_error", rule_id=rid, error=msg)
-                except Exception as exc:
-                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    if status_code in (401, 403):
-                        raise
-                    _deployment_error(
-                        "bulk_import_batch_failed", error=str(exc), tenant=tenant_config.name
-                    )
+                logger.info("updating_elastic_rule", rule_id=rule_id, name=rule.name)
+                put_resp = client.update_rule(compiled)
+                _write_failed(put_resp, "update_elastic_rule_failed", rule_id, tenant_config.name)
 
     def deploy(
         self,

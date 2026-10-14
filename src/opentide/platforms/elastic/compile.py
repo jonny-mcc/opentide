@@ -62,7 +62,7 @@ def compile_response(action: dict[str, Any]) -> dict[str, Any]:
 
 def compile_filter(entry: dict[str, Any]) -> dict[str, Any]:
     """Compile filter entry: phrase shorthand becomes detection engine phrase filter."""
-    if "field" in entry and "value" in entry and "meta" not in entry and "query" not in entry:
+    if entry.get("field") is not None and entry.get("meta") is None and entry.get("query") is None:
         field, value = entry["field"], entry["value"]
         return {
             "meta": {
@@ -79,7 +79,10 @@ def compile_filter(entry: dict[str, Any]) -> dict[str, Any]:
 
 def related_integration(entry: str | dict[str, Any]) -> dict[str, str]:
     """Compile integration block: string 'pkg' becomes {'package': pkg, 'version': '*'}; dict keeps version default."""
-    item = {"package": entry} if isinstance(entry, str) else dict(entry)
+    if isinstance(entry, str):
+        item = {"package": entry}
+    else:
+        item = {key: value for key, value in entry.items() if value is not None}
     item.setdefault("version", "*")
     return item
 
@@ -102,7 +105,9 @@ def compile_rule(
     """Compile an OpenTide rule into an Elastic Security detection engine rule body."""
     # Convert DetectionRule to dictionary representation if needed
     if isinstance(rule, DetectionRule):
-        raw_rule = rule.model_dump(by_alias=True, exclude_none=False)
+        # Unset optional keys must stay absent, as in the YAML, so that every
+        # "absent optional sources produce no key" rule in RFC 0007 §3 holds.
+        raw_rule = rule.model_dump(by_alias=True, exclude_none=True)
         rule_obj = rule
     else:
         raw_rule = rule
@@ -130,9 +135,9 @@ def compile_rule(
         elif isinstance(tenant_config, dict):
             setup = tenant_config.get("setup", tenant_config)
 
-    # Status & enabled
-    status = block.get("status") or "STAGING"
-    strategy = check_status(status)
+    # Status is required on every platform block (#493). RFC 0007 §3 still says an
+    # omitted status is STAGING; that row is amended rather than defaulted here.
+    strategy = check_status(block["status"])
     enabled = strategy != StatusStrategy.DISABLEMENT
 
     # Severity & Risk score
@@ -179,8 +184,8 @@ def compile_rule(
     elif rule_type != "machine_learning":
         body["language"] = block.get("language") or "kuery"
 
-    # Query
-    if block.get("query") is not None:
+    # Query (RFC 0007 §3: omitted for machine_learning)
+    if block.get("query") is not None and rule_type != "machine_learning":
         body["query"] = block["query"].rstrip()
 
     # Index or data_view_id

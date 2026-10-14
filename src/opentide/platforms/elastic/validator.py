@@ -60,22 +60,7 @@ def _emit_rule_advisories(
     if not cfg:
         return
 
-    # 1. Timestamp override advisory (non-ML rules)
-    if cfg.type != "machine_learning":
-        ts_override = cfg.overrides.timestamp if cfg.overrides else None
-        if ts_override != "event.ingested":
-            logger.warning(
-                "elastic_timestamp_override_warning",
-                rule=rule.name,
-                timestamp_override=ts_override,
-                advice=(
-                    "overrides.timestamp is not 'event.ingested'; querying @timestamp "
-                    "can miss alerts when event ingestion lags behind interval + lookback"
-                ),
-            )
-            _flag_warning()
-
-    # 2. Look-back time advisories (0s/0m and >1h or threshold > interval)
+    # 1. Look-back time advisories (0s/0m and >1h or threshold > interval)
     interval_str = cfg.scheduling.interval if cfg.scheduling else "5m"
     lookback_str = cfg.scheduling.lookback if cfg.scheduling else "1m"
     interval_secs = duration_seconds(interval_str)
@@ -116,7 +101,7 @@ def _emit_rule_advisories(
         )
         _flag_warning()
 
-    # 3. Non-aggregating ES|QL METADATA _id advisory
+    # 2. Non-aggregating ES|QL METADATA _id advisory
     if cfg.type == "esql" and cfg.query and not _STATS.search(cfg.query):
         if not _METADATA_ID.search(cfg.query):
             logger.warning(
@@ -129,7 +114,7 @@ def _emit_rule_advisories(
             )
             _flag_warning()
 
-    # 4. Explicit risk.score outside RFC 0007 §3 severity band
+    # 3. Explicit risk.score outside RFC 0007 §3 severity band
     if cfg.risk is not None:
         explicit_score = cfg.risk if isinstance(cfg.risk, int) else cfg.risk.score
         if explicit_score is not None:
@@ -152,7 +137,7 @@ def _emit_rule_advisories(
                 )
                 _flag_warning()
 
-    # 5. EQL sequence maxspan vs. scheduling window
+    # 4. EQL sequence maxspan vs. scheduling window
     if cfg.type == "eql" and cfg.query and _EQL_SEQUENCE.search(cfg.query):
         maxspan_match = _EQL_MAXSPAN.search(cfg.query)
         if maxspan_match:
@@ -190,7 +175,7 @@ def _emit_rule_advisories(
                 )
                 _flag_warning()
 
-    # 6. Basic-licence tenant suppression omission
+    # 5. Basic-licence tenant suppression omission
     if getattr(tenant.setup, "suppression", True) is False and cfg.suppression is not None:
         logger.warning(
             "suppression_omitted_basic_license",
@@ -201,7 +186,7 @@ def _emit_rule_advisories(
         )
         _flag_warning()
 
-    # 7. Non-Enterprise ATT&CK techniques skipped
+    # 6. Non-Enterprise ATT&CK techniques skipped
     if find_non_enterprise_techniques(rule):
         _flag_warning()
 
@@ -275,7 +260,10 @@ class ElasticValidator(QueryValidator):
                 f"Tenant authentication/authorization failed: HTTP {resp.status_code}"
             )
 
-        resp.raise_for_status()
+        if resp.status_code != 200:
+            # 429 and 5xx were already retried by the client (RFC 0007 §5). Anything
+            # left fails this rule only; it must not abort the remaining rules.
+            raise ElasticRuleCheckError(f"Preview failed (HTTP {resp.status_code}): {resp.text}")
         res = resp.json()
 
         if res.get("isAborted") is True:

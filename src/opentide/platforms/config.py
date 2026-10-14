@@ -84,7 +84,9 @@ def _load_tenants(system: str, tenants_config: Any) -> list[Any]:
             raise ValueError(f"{where}: {_PROXY_RETIRED}")
         if system == "elastic":
             raw_key = supplied_setup.get("api_key")
-            if raw_key is not None and (not isinstance(raw_key, str) or not raw_key.startswith("$")):
+            if raw_key is not None and (
+                not isinstance(raw_key, str) or not raw_key.startswith("$")
+            ):
                 raise ValueError(
                     f"{where} setup: api_key must be an environment variable reference (e.g. $ELASTIC_API_KEY)"
                 )

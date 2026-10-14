@@ -194,6 +194,8 @@ class CarbonBlackConfig(PlatformConfigBase):
 
 
 _ENDPOINT_COMMANDS = frozenset({"isolate", "kill-process", "suspend-process", "runscript"})
+_ENDPOINT_KEYS = frozenset({"endpoint", "comment", "field"})
+_ALERT_SEVERITIES = frozenset({"informational", "low", "medium", "high", "critical"})
 _EXCEPTION_TYPES = frozenset({"detection", "rule_default"})
 _RULE_TYPES = frozenset(
     {"query", "eql", "esql", "threshold", "new_terms", "threat_match", "machine_learning"}
@@ -253,13 +255,15 @@ def _pattern_list(value: Any) -> bool:
 
 
 def _valid_response(action: dict[str, Any]) -> bool:
-    if "endpoint" in action and action["endpoint"] in _ENDPOINT_COMMANDS:
-        return True
-    if "osquery" in action and isinstance(action["osquery"], dict):
-        return True
-    kind = action.get("action_type_id")
-    command = (action.get("params") or {}).get("command")
-    return kind == ".osquery" or (kind == ".endpoint" and command in _ENDPOINT_COMMANDS)
+    """RFC 0007 ``response_action``: the two author shapes only, never Kibana's raw form."""
+    if "endpoint" in action:
+        return action["endpoint"] in _ENDPOINT_COMMANDS and set(action) <= _ENDPOINT_KEYS
+    if "osquery" in action:
+        osquery = action["osquery"]
+        return (
+            set(action) == {"osquery"} and isinstance(osquery, dict) and bool(osquery.get("query"))
+        )
+    return False
 
 
 class ElasticConfig(PlatformConfigBase):
@@ -267,7 +271,7 @@ class ElasticConfig(PlatformConfigBase):
 
     type: Literal[
         "query", "eql", "esql", "threshold", "new_terms", "threat_match", "machine_learning"
-    ] = "query"
+    ]
     query: QueryText | None = None
     language: Literal["kuery", "lucene"] | None = None
     index: list[str] | None = None
@@ -367,8 +371,12 @@ class ElasticConfig(PlatformConfigBase):
                     continue
                 shorthand = "field" in entry or "value" in entry or "negate" in entry
                 raw_filter = "meta" in entry or "query" in entry
-                if (shorthand and raw_filter) or (
-                    shorthand and ("field" not in entry or "value" not in entry)
+                # Exactly one shape, and that shape complete: {field, value, negate?}
+                # or {meta, query}. An empty entry is neither.
+                if (
+                    shorthand == raw_filter
+                    or (shorthand and ("field" not in entry or "value" not in entry))
+                    or (raw_filter and ("meta" not in entry or "query" not in entry))
                 ):
                     codes.add("filter_shape")
         for item in (raw.get("exceptions") or {}).get("lists") or []:
@@ -382,13 +390,16 @@ class ElasticConfig(PlatformConfigBase):
                 if not isinstance(action, dict) or not _valid_response(action):
                     codes.add("response_action")
         suppression = raw.get("suppression")
+        if suppression is not None and not isinstance(suppression, dict):
+            codes.add("suppression_shape")
+            suppression = None
         if suppression is not None:
             group_by = suppression.get("group_by")
             if rule_type == "threshold":
                 if not suppression.get("duration") or group_by:
                     codes.add("suppression_shape")
             elif (
-                not group_by
+                not isinstance(group_by, list)
                 or not 1 <= len(group_by) <= 3
                 or len(set(group_by)) != len(group_by)
                 or not all(group_by)
@@ -397,14 +408,28 @@ class ElasticConfig(PlatformConfigBase):
         if (
             isinstance(new_terms, dict)
             and "fields" in new_terms
-            and not 1 <= len(new_terms["fields"]) <= 3
+            and not (isinstance(new_terms["fields"], list) and 1 <= len(new_terms["fields"]) <= 3)
         ):
             codes.add("new_terms_fields")
         threshold = raw.get("threshold")
-        if isinstance(threshold, dict) and (
-            len(threshold.get("field") or []) > 5 or threshold.get("value", 0) < 1
+        if isinstance(threshold, dict):
+            threshold_field = threshold.get("field") or []
+            threshold_value = threshold.get("value")
+            if (
+                not isinstance(threshold_field, list)
+                or len(threshold_field) > 5
+                or not isinstance(threshold_value, int)
+                or threshold_value < 1
+            ):
+                codes.add("threshold_fields")
+        severity = raw.get("severity")
+        level = severity.get("default") if isinstance(severity, dict) else severity
+        if level is not None and (
+            not isinstance(level, str) or level.strip().lower() not in _ALERT_SEVERITIES
         ):
-            codes.add("threshold_fields")
+            # RFC 0007 §2: alert_severity vocabulary. An unknown value used to
+            # compile silently to Informational (low, risk 1).
+            codes.add("severity")
         risk = raw.get("risk")
         if isinstance(risk, int):
             if not 0 <= risk <= 100:

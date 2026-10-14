@@ -105,7 +105,7 @@ class ElasticClient:
         timeframe_end: str | None = None,
     ) -> requests.Response:
         """Execute a rule preview to test query and configuration."""
-        url = self._kibana_url("/api/detection_engine/rules/_preview")
+        url = self._kibana_url("/api/detection_engine/rules/preview")
         headers = {"kbn-xsrf": "true"}
         preview_body = dict(payload)
         preview_body["invocationCount"] = invocation_count
@@ -115,29 +115,6 @@ class ElasticClient:
             timeframe_end = datetime.now(timezone.utc).isoformat().replace("+00:00", "Z")
         preview_body["timeframeEnd"] = timeframe_end
         return self.session.post(url, json=preview_body, headers=headers, timeout=self.timeout)
-
-    def import_rules(
-        self,
-        ndjson_data: str | bytes,
-        overwrite: bool = True,
-        overwrite_exceptions: bool = False,
-        overwrite_action_connectors: bool = False,
-    ) -> dict[str, Any]:
-        """Import detection rules via multipart/form-data NDJSON upload."""
-        url = self._kibana_url("/api/detection_engine/rules/_import")
-        params = {
-            "overwrite": str(overwrite).lower(),
-            "overwrite_exceptions": str(overwrite_exceptions).lower(),
-            "overwrite_action_connectors": str(overwrite_action_connectors).lower(),
-        }
-        payload_bytes = ndjson_data.encode("utf-8") if isinstance(ndjson_data, str) else ndjson_data
-        files = {"file": ("rules.ndjson", payload_bytes, "application/x-ndjson")}
-        headers = {"kbn-xsrf": "true", "Content-Type": None}
-        resp = self.session.post(
-            url, params=params, files=files, headers=headers, timeout=self.timeout
-        )
-        resp.raise_for_status()
-        return resp.json()
 
     def find_rules(
         self,

@@ -489,4 +489,3 @@ class ElasticThreatMatch(TideModel):
 class ElasticMachineLearning(TideModel):
     job_id: str | list[str]
     anomaly_threshold: int
-

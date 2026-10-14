@@ -179,3 +179,46 @@ def test_elastic_machine_learning_job_id_passthrough() -> None:
         }
     )
     assert config_list.machine_learning.job_id == ["job_one", "job_two"]
+
+
+_BASE = {"status": "STAGING", "type": "query", "query": "process.name: *"}
+
+
+@pytest.mark.parametrize(
+    ("overrides", "code"),
+    [
+        ({"actions": {"respond": [{"osquery": {"timeout": 60}}]}}, "response_action"),
+        ({"actions": {"respond": [{"endpoint": "isolate", "bogus": 1}]}}, "response_action"),
+        (
+            {"actions": {"respond": [{"action_type_id": ".osquery", "params": {}}]}},
+            "response_action",
+        ),
+        ({"filters": [{}]}, "filter_shape"),
+        ({"filters": [{"meta": {}}]}, "filter_shape"),
+        ({"severity": "Hgh"}, "severity"),
+        ({"severity": {"default": "urgent"}}, "severity"),
+        ({"suppression": "1h"}, "suppression_shape"),
+        ({"suppression": {"group_by": "host.name"}}, "suppression_shape"),
+        (
+            {"type": "threshold", "threshold": {"value": "x"}, "suppression": {"duration": "1h"}},
+            "threshold_fields",
+        ),
+        (
+            {
+                "type": "new_terms",
+                "new_terms": {"fields": "user.name", "history_window_start": "14d"},
+            },
+            "new_terms_fields",
+        ),
+    ],
+)
+def test_elastic_config_rejects_with_a_code_not_a_crash(overrides: dict, code: str) -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError, match=code):
+        ElasticConfig.model_validate({**_BASE, **overrides})
+
+
+@pytest.mark.parametrize("severity", ["Informational", "low", "High", {"default": "Critical"}])
+def test_elastic_config_accepts_alert_severity_vocabulary(severity: object) -> None:
+    ElasticConfig.model_validate({**_BASE, "severity": severity})

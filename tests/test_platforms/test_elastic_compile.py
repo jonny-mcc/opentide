@@ -133,3 +133,21 @@ def test_never_send_id_or_version() -> None:
     compiled = compile_rule(rule_dict, STAGING_SETUP)
     assert "id" not in compiled
     assert "version" not in compiled
+
+
+def test_loaded_rule_compiles_like_the_yaml() -> None:
+    """The deployer compiles a loaded DetectionRule, not the YAML dict (RFC 0007 §3)."""
+    from opentide.loading.rule_loader import load_rule_from_dict
+
+    for name in ("rule-query", "rule-eql", "rule-threshold", "rule-new-terms", "rule-threat"):
+        rule_dict = _load_yaml_fixture(name)
+        assert compile_rule(load_rule_from_dict(rule_dict), STAGING_SETUP) == compile_rule(
+            rule_dict, STAGING_SETUP
+        ), name
+
+
+def test_loaded_rule_matches_published_body() -> None:
+    from opentide.loading.rule_loader import load_rule_from_dict
+
+    rule = load_rule_from_dict(_load_yaml_fixture("rule-query"))
+    assert compile_rule(rule, STAGING_SETUP) == _load_json_fixture("body-query")

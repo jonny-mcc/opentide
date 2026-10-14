@@ -41,7 +41,6 @@ class ExtractImport(str, Enum):
 
     sentinel = "sentinel"
     defender = "defender"
-    elastic = "elastic"
 
 
 class CiPlatform(str, Enum):

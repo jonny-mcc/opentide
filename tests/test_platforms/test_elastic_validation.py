@@ -427,9 +427,10 @@ def test_validator_preview_403_skips_the_rest_of_the_tenant(
 
 
 @patch("opentide.platforms.elastic.validator.run_elasticsearch_checks", return_value=[])
-def test_validator_warns_when_timestamp_override_missing_on_non_ml_rule(
+def test_validator_does_not_warn_when_timestamp_override_is_omitted(
     _mock_checks, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    """overrides.timestamp is optional in RFC 0007 §2; the RFC template omits it."""
     _clear_validation_flags(monkeypatch)
     rule = _elastic_rule(
         "No Timestamp Override",
@@ -444,26 +445,6 @@ def test_validator_warns_when_timestamp_override_missing_on_non_ml_rule(
         mock_deployment.return_value.rule_deployment = [batch]
         mock_preview.return_value = _mock_response(200, json_data={"logs": []})
         ElasticValidator().validate([rule])
-    assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
-
-    # Machine learning rules do not warn when overrides.timestamp is omitted
-    _clear_validation_flags(monkeypatch)
-    ml_rule = _elastic_rule(
-        "ML Rule",
-        "00000000-0000-4000-8003-000000000008",
-        rule_type="machine_learning",
-        query=None,
-        overrides=None,
-        machine_learning={"job_id": "anomaly_job", "anomaly_threshold": 75},
-    )
-    ml_batch = MagicMock(tenant=_tenant(), rules=[ml_rule])
-    with (
-        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
-        patch.object(ElasticClient, "preview_rule") as mock_preview,
-    ):
-        mock_deployment.return_value.rule_deployment = [ml_batch]
-        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
-        ElasticValidator().validate([ml_rule])
     assert os.environ.get("VALIDATION_WARNING_RAISED") is None
 
 
@@ -630,16 +611,13 @@ def test_validator_warns_on_basic_license_suppression_and_ics_technique(
     assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
 
 
-def test_resolve_rule_sources_data_view_404_warns_and_403_raises() -> None:
+def test_resolve_rule_sources_data_view_404_fails_rule_and_403_raises() -> None:
     client = ElasticClient(url="https://kibana.test", elasticsearch_url="https://es.test")
     block = {"type": "query", "query": "process.name: *", "data_view_id": "missing-dv"}
-    warnings: list[str] = []
     with patch.object(client.session, "get") as mock_get:
         mock_get.return_value = _mock_response(404, json_data={"message": "Not found"})
-        sources, has_explicit = resolve_rule_sources(client, block, warnings=warnings)
-    assert sources is None
-    assert has_explicit is True
-    assert any("missing-dv" in w for w in warnings)
+        with pytest.raises(ElasticRuleCheckError, match="missing-dv"):
+            resolve_rule_sources(client, block)
 
     with patch.object(client.session, "get") as mock_get:
         mock_get.return_value = _mock_response(403, text="Forbidden")
@@ -724,3 +702,17 @@ def test_threat_match_fields_check_unonboarded_warns_and_non_searchable_fails() 
         )
         with pytest.raises(ElasticRuleCheckError, match="not searchable"):
             run_threat_match_fields_check(client, block)
+
+
+def test_aggregation_field_check_non_200_fails_closed() -> None:
+    client = ElasticClient(url="https://kibana.test", elasticsearch_url="https://es.test")
+    block = {
+        "type": "query",
+        "query": "process.name: *",
+        "index": ["logs-*"],
+        "suppression": {"group_by": ["host.name"]},
+    }
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.return_value = _mock_response(503, text="unavailable")
+        with pytest.raises(ElasticRuleCheckError, match="HTTP 503"):
+            run_aggregation_fields_check(client, block)

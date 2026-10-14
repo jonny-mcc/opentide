@@ -94,20 +94,13 @@ def resolve_rule_sources(
             raise ElasticTenantError(
                 f"Kibana data_view '{data_view_id}' lookup failed: HTTP {resp.status_code}"
             )
-        if resp.status_code == 404:
-            _note(
-                warnings,
-                f"Data view '{data_view_id}' not found in Kibana space; "
-                "skipping mapping checks until onboarded",
-            )
-            return None, True
         if resp.status_code != 200:
-            _note(
-                warnings,
-                f"Data view '{data_view_id}' lookup failed (HTTP {resp.status_code}); "
-                "skipping mapping checks",
+            # RFC 0007 §2: data_view_id names an existing data view, and this
+            # platform never creates one. A data view is a Kibana object, not
+            # data, so a missing one is an authoring error, not "not onboarded".
+            raise ElasticRuleCheckError(
+                f"Data view '{data_view_id}' lookup failed (HTTP {resp.status_code})"
             )
-            return None, True
         data_view = resp.json()
         dv_obj = (data_view.get("data_view") or data_view) if isinstance(data_view, dict) else {}
         title = dv_obj.get("title") if isinstance(dv_obj, dict) else None
@@ -240,8 +233,11 @@ def run_aggregation_fields_check(
     resp = client.field_caps(sources, fields)
     _raise_if_unauthorized(resp, "_field_caps")
     if resp.status_code != 200:
-        _note(warnings, f"field capabilities check failed (HTTP {resp.status_code})")
-        return
+        # RFC 0007 §6: every field MUST be present and aggregatable; a check
+        # that could not run is not a pass.
+        raise ElasticRuleCheckError(
+            f"Aggregation field check failed (HTTP {resp.status_code}): {resp.text}"
+        )
 
     caps_data = resp.json()
     indices = caps_data.get("indices", [])
@@ -303,8 +299,9 @@ def run_timestamp_fields_check(
     resp = client.field_caps(sources, ts_fields)
     _raise_if_unauthorized(resp, "_field_caps")
     if resp.status_code != 200:
-        _note(warnings, f"timestamp field capabilities check failed (HTTP {resp.status_code})")
-        return
+        raise ElasticRuleCheckError(
+            f"Timestamp field check failed (HTTP {resp.status_code}): {resp.text}"
+        )
 
     caps_data = resp.json()
     indices = caps_data.get("indices", [])
@@ -348,8 +345,9 @@ def _check_searchable_fields(
     resp = client.field_caps(sources, fields)
     _raise_if_unauthorized(resp, "_field_caps")
     if resp.status_code != 200:
-        _note(warnings, f"{label} field capabilities check failed (HTTP {resp.status_code})")
-        return
+        raise ElasticRuleCheckError(
+            f"{label} field check failed (HTTP {resp.status_code}): {resp.text}"
+        )
 
     caps_data = resp.json()
     indices = caps_data.get("indices", [])

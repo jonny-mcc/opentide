@@ -12,7 +12,7 @@ from __future__ import annotations
 import importlib
 from contextlib import redirect_stdout
 from io import StringIO
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING
 
 from opentide.cli.enums import ExtractImport
 
@@ -22,7 +22,6 @@ if TYPE_CHECKING:
 _IMPORT_MODULES: dict[ExtractImport, str] = {
     ExtractImport.sentinel: "opentide.extraction.sentinel_importer",
     ExtractImport.defender: "opentide.extraction.mde_importer",
-    ExtractImport.elastic: "opentide.extraction.elastic_importer",
 }
 
 #: Extra that provides the vendor SDK each importer needs, keyed by target.
@@ -39,7 +38,7 @@ def _root_package(exc: ModuleNotFoundError) -> str:
     return (exc.name or "").split(".", 1)[0]
 
 
-def _run_engine_module(module_name: str, target: ExtractImport, **kwargs: object) -> Any:
+def _run_engine_module(module_name: str, target: ExtractImport, **kwargs: object) -> None:
     """Import the packaged extraction module and run it."""
     try:
         module = importlib.import_module(module_name)
@@ -55,16 +54,16 @@ def _run_engine_module(module_name: str, target: ExtractImport, **kwargs: object
     if runner is None:
         raise FileNotFoundError(f"Extraction module has no run(): {module_name}")
     try:
-        return runner(**kwargs)
+        runner(**kwargs)
     except TypeError as exc:
         raise TypeError(
             f"Extraction module runner in {module_name} failed with arguments {list(kwargs.keys())}: {exc}"
         ) from exc
 
 
-def run_extract_import(target: ExtractImport, **kwargs: object) -> Any:
+def run_extract_import(target: ExtractImport, **kwargs: object) -> None:
     """Run a platform import module from the installed package."""
-    return _run_engine_module(_IMPORT_MODULES[target], target, **kwargs)
+    _run_engine_module(_IMPORT_MODULES[target], target, **kwargs)
 
 
 def run_extract(
@@ -76,18 +75,15 @@ def run_extract(
     """Entry point for extract import command."""
     ctx.apply_environment()
     captured = StringIO()
-    run_res = None
     if ctx.json_output:
         with redirect_stdout(captured):
-            run_res = run_extract_import(import_target, **kwargs)
+            run_extract_import(import_target, **kwargs)
     else:
-        run_res = run_extract_import(import_target, **kwargs)
+        run_extract_import(import_target, **kwargs)
     result: dict[str, object] = {
         "message": f"Imported {import_target.value}",
         "import": import_target.value,
     }
-    if isinstance(run_res, dict):
-        result.update(run_res)
     if captured.getvalue().strip():
         result["output"] = captured.getvalue().strip()
     return result

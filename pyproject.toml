@@ -211,7 +211,6 @@ exclude = [
     "src/opentide/platforms/harfanglab",
     "src/opentide/platforms/sentinel",
     "src/opentide/platforms/sentinel_one",
-    "src/opentide/platforms/elastic",
     "src/opentide/platforms/kql.py",
     "src/opentide/platforms/plugins.py",
     "src/opentide/core/debug.py",
@@ -290,7 +289,6 @@ exclude = [
     "src/opentide/core/index_manager.py",
     "src/opentide/core/registry.py",
     "src/opentide/validation",
-    "src/opentide/sharing",
 ]
 
 [tool.ty.rules]

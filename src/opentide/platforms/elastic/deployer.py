@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import copy
 import json
+import os
 from collections.abc import Sequence
 from typing import Any
 
@@ -19,9 +20,60 @@ from opentide.models.rule import DetectionRule
 from opentide.models.system_config import ConfigurationModels
 from opentide.platforms.elastic.client import ElasticClient
 from opentide.platforms.elastic.compile import compile_rule
-from opentide.platforms.elastic.es_checks import run_elasticsearch_checks
+from opentide.platforms.elastic.es_checks import (
+    ElasticRuleCheckError,
+    ElasticTenantError,
+    run_elasticsearch_checks,
+)
 
 logger = structlog.get_logger(__name__)
+
+
+def _deployment_error(event: str, **kwargs: Any) -> None:
+    logger.error(event, **kwargs)
+    os.environ["DEPLOYMENT_ERROR_RAISED"] = "1"
+
+
+def _deployment_warning(event: str, **kwargs: Any) -> None:
+    logger.warning(event, **kwargs)
+    os.environ["DEPLOYMENT_WARNING_RAISED"] = "1"
+
+
+def _check_rule(
+    client: ElasticClient,
+    block: dict[str, Any],
+    setup_index: list[str],
+    *,
+    rule_id: str,
+    rule_name: str,
+) -> bool:
+    """Run Elasticsearch checks. Return whether the rule may be deployed.
+
+    A tenant failure (auth) propagates. A rule failure is recorded and skips
+    that rule. Warnings are recorded and the rule still deploys.
+    """
+    try:
+        reported = run_elasticsearch_checks(client, block, setup_index=setup_index)
+    except ElasticTenantError:
+        raise
+    except ElasticRuleCheckError as exc:
+        _deployment_error(
+            "elasticsearch_checks_failed",
+            rule_id=rule_id,
+            rule=rule_name,
+            error=str(exc),
+        )
+        return False
+    if isinstance(reported, list):
+        for warning in reported:
+            _deployment_warning(
+                "elasticsearch_check_warning",
+                rule_id=rule_id,
+                rule=rule_name,
+                warning=warning,
+            )
+    return True
+
 
 PRESERVED_FIELDS = (
     "actions",
@@ -78,7 +130,7 @@ class ElasticDeploy:
                 continue
 
             rule_id = rule.metadata.uuid if rule.metadata else ""
-            status = cfg.status or "STAGING"
+            status = cfg.status
             strategy = check_status(status)
 
             if strategy is StatusStrategy.INERT:
@@ -97,13 +149,15 @@ class ElasticDeploy:
                     elif status_code in (401, 403):
                         raise
                     else:
-                        logger.error("delete_elastic_rule_failed", rule_id=rule_id, error=str(exc))
+                        _deployment_error(
+                            "delete_elastic_rule_failed", rule_id=rule_id, error=str(exc)
+                        )
                 continue
 
             # Active deployment: PREVIEW, RELEASE, or DISABLEMENT
             if setup.suppression is False and cfg.suppression is not None:
                 if rule_id not in suppression_warned:
-                    logger.warning(
+                    _deployment_warning(
                         "suppression_omitted_basic_license",
                         rule=rule.name,
                         rule_id=rule_id,
@@ -111,12 +165,14 @@ class ElasticDeploy:
                     )
                     suppression_warned.add(rule_id)
 
-            # Mandatory Elasticsearch pre-flight checks
             block_dict = cfg.model_dump(by_alias=True, exclude_none=False)
-            try:
-                run_elasticsearch_checks(client, block_dict, setup_index=list(setup.index or []))
-            except Exception as exc:
-                logger.error("elasticsearch_checks_failed", rule_id=rule_id, rule=rule.name, error=str(exc))
+            if not _check_rule(
+                client,
+                block_dict,
+                list(setup.index or []),
+                rule_id=rule_id,
+                rule_name=rule.name,
+            ):
                 continue
 
             compiled = self.compile_deployment(rule, tenant_config=tenant_config)
@@ -132,7 +188,7 @@ class ElasticDeploy:
                 status_code = getattr(getattr(exc, "response", None), "status_code", None)
                 if status_code in (401, 403):
                     raise
-                logger.error("get_elastic_rule_failed", rule_id=rule_id, error=str(exc))
+                _deployment_error("get_elastic_rule_failed", rule_id=rule_id, error=str(exc))
                 continue
 
             if get_resp.status_code in (401, 403):
@@ -146,7 +202,7 @@ class ElasticDeploy:
                 try:
                     create_resp = client.create_rule(compiled)
                     if create_resp.status_code in (400, 409):
-                        logger.error(
+                        _deployment_error(
                             "create_elastic_rule_failed",
                             rule_id=rule_id,
                             status_code=create_resp.status_code,
@@ -160,13 +216,13 @@ class ElasticDeploy:
                     status_code = getattr(getattr(exc, "response", None), "status_code", None)
                     if status_code in (401, 403):
                         raise
-                    logger.error("create_elastic_rule_error", rule_id=rule_id, error=str(exc))
+                    _deployment_error("create_elastic_rule_error", rule_id=rule_id, error=str(exc))
                 continue
 
             if get_resp.status_code == 200:
                 remote = get_resp.json()
                 if _is_prebuilt_rule(remote):
-                    logger.error(
+                    _deployment_error(
                         "refusing_to_modify_prebuilt_rule",
                         rule_id=rule_id,
                         name=rule.name,
@@ -194,7 +250,7 @@ class ElasticDeploy:
                         del_resp.raise_for_status()
                     post_resp = client.create_rule(compiled)
                     if post_resp.status_code in (400, 409):
-                        logger.error(
+                        _deployment_error(
                             "recreate_elastic_rule_failed",
                             rule_id=rule_id,
                             status_code=post_resp.status_code,
@@ -209,7 +265,7 @@ class ElasticDeploy:
                     logger.info("updating_elastic_rule", rule_id=rule_id, name=rule.name)
                     put_resp = client.update_rule(compiled)
                     if put_resp.status_code in (400, 409):
-                        logger.error(
+                        _deployment_error(
                             "update_elastic_rule_failed",
                             rule_id=rule_id,
                             status_code=put_resp.status_code,
@@ -237,7 +293,7 @@ class ElasticDeploy:
                 continue
 
             rule_id = rule.metadata.uuid if rule.metadata else ""
-            status = cfg.status or "STAGING"
+            status = cfg.status
             strategy = check_status(status)
 
             if strategy is StatusStrategy.INERT:
@@ -256,19 +312,31 @@ class ElasticDeploy:
                     elif status_code in (401, 403):
                         raise
                     else:
-                        logger.error("delete_elastic_rule_failed", rule_id=rule_id, error=str(exc))
+                        _deployment_error(
+                            "delete_elastic_rule_failed", rule_id=rule_id, error=str(exc)
+                        )
                 continue
 
             # Active deployment: PREVIEW, RELEASE, or DISABLEMENT
             if setup.suppression is False and cfg.suppression is not None:
                 if rule_id not in suppression_warned:
-                    logger.warning(
+                    _deployment_warning(
                         "suppression_omitted_basic_license",
                         rule=rule.name,
                         rule_id=rule_id,
                         tenant=tenant_config.name,
                     )
                     suppression_warned.add(rule_id)
+
+            block_dict = cfg.model_dump(by_alias=True, exclude_none=False)
+            if not _check_rule(
+                client,
+                block_dict,
+                list(setup.index or []),
+                rule_id=rule_id,
+                rule_name=rule.name,
+            ):
+                continue
 
             compiled = self.compile_deployment(rule, tenant_config=tenant_config)
             if strategy is StatusStrategy.DISABLEMENT:
@@ -300,13 +368,19 @@ class ElasticDeploy:
                     if errors:
                         for err in errors:
                             rid = err.get("rule_id") or err.get("id") or "unknown"
-                            msg = err.get("error", {}).get("message") or err.get("message") or str(err)
-                            logger.error("bulk_import_rule_error", rule_id=rid, error=msg)
+                            msg = (
+                                err.get("error", {}).get("message")
+                                or err.get("message")
+                                or str(err)
+                            )
+                            _deployment_error("bulk_import_rule_error", rule_id=rid, error=msg)
                 except Exception as exc:
                     status_code = getattr(getattr(exc, "response", None), "status_code", None)
                     if status_code in (401, 403):
                         raise
-                    logger.error("bulk_import_batch_failed", error=str(exc), tenant=tenant_config.name)
+                    _deployment_error(
+                        "bulk_import_batch_failed", error=str(exc), tenant=tenant_config.name
+                    )
 
     def deploy(
         self,
@@ -314,9 +388,7 @@ class ElasticDeploy:
         deployment_plan: DeploymentStrategy | None = None,
     ) -> None:
         """Deploy detection rules using TideDeployment tenant batches."""
-        deployment = TideDeployment(
-            mdr_deployment, DetectionPlatforms.ELASTIC, deployment_plan
-        )
+        deployment = TideDeployment(mdr_deployment, DetectionPlatforms.ELASTIC, deployment_plan)
         for batch in deployment.rule_deployment:
             tenant: ConfigurationModels.Systems.Elastic.Tenant = batch.tenant
             client = ElasticClient(
@@ -334,6 +406,7 @@ class ElasticDeploy:
                     tenant=tenant.name,
                     error=str(exc),
                 )
+                os.environ["DEPLOYMENT_ERROR_RAISED"] = "1"
 
 
 def declare() -> ElasticDeploy:

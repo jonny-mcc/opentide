@@ -3,8 +3,10 @@
 from __future__ import annotations
 
 import json
+import os
 from unittest.mock import MagicMock, patch
 
+import pytest
 import requests
 
 from opentide.models.deployment_enums import DeploymentStrategy
@@ -41,7 +43,9 @@ def _make_tenant() -> ConfigurationModels.Systems.Elastic.Tenant:
     )
 
 
-def _make_rule(rule_id: str = "6b2e9c14-7a31-4f58-9d0c-1e8a4b7c2d90", status: str = "STAGING") -> DetectionRule:
+def _make_rule(
+    rule_id: str = "6b2e9c14-7a31-4f58-9d0c-1e8a4b7c2d90", status: str = "STAGING"
+) -> DetectionRule:
     raw = {
         "name": "Test Rule",
         "metadata": {
@@ -79,7 +83,10 @@ def test_deploy_create_rule_on_404(mock_checks) -> None:
     batch = MagicMock(rules=[rule])
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client.session, "get") as mock_get, patch.object(client.session, "post") as mock_post:
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "post") as mock_post,
+    ):
         mock_get.return_value = _mock_response(404, {"message": "Not found"})
         mock_post.return_value = _mock_response(200, {"rule_id": rule.metadata.uuid})
 
@@ -108,7 +115,10 @@ def test_deploy_update_rule_on_200_preserves_fields(mock_checks) -> None:
     }
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client.session, "get") as mock_get, patch.object(client.session, "put") as mock_put:
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "put") as mock_put,
+    ):
         mock_get.return_value = _mock_response(200, remote_rule)
         mock_put.return_value = _mock_response(200, {"rule_id": rule.metadata.uuid})
 
@@ -135,7 +145,11 @@ def test_deploy_type_change_recreates_rule(mock_checks) -> None:
     }
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client.session, "get") as mock_get, patch.object(client.session, "delete") as mock_del, patch.object(client.session, "post") as mock_post:
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "delete") as mock_del,
+        patch.object(client.session, "post") as mock_post,
+    ):
         mock_get.return_value = _mock_response(200, remote_rule)
         mock_del.return_value = _mock_response(200, {})
         mock_post.return_value = _mock_response(200, {"rule_id": rule.metadata.uuid})
@@ -162,7 +176,10 @@ def test_deploy_refuses_prebuilt_rule(mock_checks) -> None:
     }
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client.session, "get") as mock_get, patch.object(client.session, "put") as mock_put:
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "put") as mock_put,
+    ):
         mock_get.return_value = _mock_response(200, remote_prebuilt)
 
         deployer = ElasticDeploy()
@@ -194,7 +211,10 @@ def test_deploy_rule_error_400_continues_batch(mock_checks) -> None:
     batch = MagicMock(rules=[rule1, rule2])
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client.session, "get") as mock_get, patch.object(client.session, "post") as mock_post:
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "post") as mock_post,
+    ):
         mock_get.return_value = _mock_response(404)
         mock_post.side_effect = [
             _mock_response(400, text="Bad request"),
@@ -212,7 +232,9 @@ def test_client_import_rules() -> None:
     tenant = _make_tenant()
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
     with patch.object(client.session, "post") as mock_post:
-        mock_post.return_value = _mock_response(200, json_data={"success": True, "success_count": 2, "errors": []})
+        mock_post.return_value = _mock_response(
+            200, json_data={"success": True, "success_count": 2, "errors": []}
+        )
         ndjson = '{"rule_id": "r1"}\n{"rule_id": "r2"}'
         res = client.import_rules(ndjson, overwrite=True)
         assert res["success"] is True
@@ -234,7 +256,10 @@ def test_deploy_bulk_import_routing(mock_checks) -> None:
     batch = MagicMock(rules=[rule1, rule2])
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client, "import_rules") as mock_import, patch.object(client, "create_rule") as mock_create:
+    with (
+        patch.object(client, "import_rules") as mock_import,
+        patch.object(client, "create_rule") as mock_create,
+    ):
         mock_import.return_value = {"success": True, "success_count": 2, "errors": []}
         deployer = ElasticDeploy()
         deployer.deploy_mdr(batch, client, tenant)
@@ -255,7 +280,10 @@ def test_deploy_bulk_import_with_deletions(mock_checks) -> None:
     batch = MagicMock(rules=[active_rule, deleted_rule])
 
     client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
-    with patch.object(client, "import_rules") as mock_import, patch.object(client, "delete_rule") as mock_del:
+    with (
+        patch.object(client, "import_rules") as mock_import,
+        patch.object(client, "delete_rule") as mock_del,
+    ):
         mock_import.return_value = {"success": True, "success_count": 1, "errors": []}
         mock_del.return_value = _mock_response(200, {})
         deployer = ElasticDeploy()
@@ -267,3 +295,117 @@ def test_deploy_bulk_import_with_deletions(mock_checks) -> None:
         assert active_rule.metadata.uuid in ndjson_arg
         assert deleted_rule.metadata.uuid not in ndjson_arg
 
+
+def _clear_deploy_flags(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("DEPLOYMENT_ERROR_RAISED", raising=False)
+    monkeypatch.delenv("DEPLOYMENT_WARNING_RAISED", raising=False)
+
+
+def _esql_rule(rule_id: str, query: str) -> DetectionRule:
+    raw = {
+        "name": "ES|QL Rule",
+        "metadata": {
+            "uuid": rule_id,
+            "schema": "rule::1.0",
+            "version": 1,
+            "created": "2026-01-01",
+            "modified": "2026-01-02",
+            "tlp": "clear",
+            "author": "Author",
+        },
+        "description": "Test description",
+        "techniques": [],
+        "response": {"alert_severity": "High"},
+        "configurations": {
+            "elastic": {
+                "enabled": True,
+                "schema": "platform::elastic::1.0",
+                "status": "STAGING",
+                "type": "esql",
+                "query": query,
+            }
+        },
+    }
+    from opentide.loading.rule_loader import load_rule_from_dict
+
+    return load_rule_from_dict(raw)
+
+
+def test_deploy_esql_parse_error_skips_create(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_deploy_flags(monkeypatch)
+    tenant = _make_tenant()
+    rule = _esql_rule("esql-bad", "FROM logs-* | WHER process.name == 'test'")
+    batch = MagicMock(rules=[rule])
+    client = ElasticClient(url=tenant.setup.url, elasticsearch_url=tenant.setup.elasticsearch_url)
+
+    with (
+        patch.object(client.session, "post") as mock_post,
+        patch.object(client.session, "get") as mock_get,
+    ):
+        mock_post.return_value = _mock_response(
+            400,
+            json_data={"error": {"type": "parsing_exception", "reason": "mismatched input 'WHER'"}},
+        )
+        ElasticDeploy().deploy_mdr(batch, client, tenant)
+        mock_get.assert_not_called()
+        assert mock_post.call_count == 1
+
+    assert os.environ.get("DEPLOYMENT_ERROR_RAISED") == "1"
+    from opentide.cli.exit_codes import deployment_outcome
+
+    assert deployment_outcome().failed is True
+
+
+def test_deploy_unresolved_esql_index_still_creates(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_deploy_flags(monkeypatch)
+    tenant = _make_tenant()
+    rule = _esql_rule("esql-new", "FROM logs-* | WHERE process.name == 'test'")
+    batch = MagicMock(rules=[rule])
+    client = ElasticClient(url=tenant.setup.url, elasticsearch_url=tenant.setup.elasticsearch_url)
+
+    with (
+        patch.object(client.session, "post") as mock_post,
+        patch.object(client.session, "get") as mock_get,
+    ):
+        mock_post.side_effect = [
+            _mock_response(
+                400,
+                json_data={"error": {"type": "verification_exception", "reason": "Unknown index"}},
+            ),
+            _mock_response(200, json_data={"rule_id": rule.metadata.uuid}),
+        ]
+        mock_get.side_effect = [
+            _mock_response(200, json_data={"indices": [], "aliases": [], "data_streams": []}),
+            _mock_response(404, json_data={"message": "Not found"}),
+        ]
+        ElasticDeploy().deploy_mdr(batch, client, tenant)
+        assert mock_post.call_count == 2
+
+    assert os.environ.get("DEPLOYMENT_WARNING_RAISED") == "1"
+    assert os.environ.get("DEPLOYMENT_ERROR_RAISED") is None
+
+
+def test_deploy_bulk_leaves_out_a_failing_rule(monkeypatch: pytest.MonkeyPatch) -> None:
+    _clear_deploy_flags(monkeypatch)
+    tenant = _make_tenant()
+    tenant.setup.bulk_import = True
+    bad = _esql_rule("esql-bad", "FROM logs-* | WHER process.name == 'test'")
+    good = _make_rule("good-rule")
+    batch = MagicMock(rules=[bad, good])
+    client = ElasticClient(url=tenant.setup.url, elasticsearch_url=tenant.setup.elasticsearch_url)
+
+    with (
+        patch.object(client.session, "post") as mock_post,
+        patch.object(client, "import_rules") as mock_import,
+    ):
+        mock_post.return_value = _mock_response(
+            400,
+            json_data={"error": {"type": "parsing_exception", "reason": "mismatched input 'WHER'"}},
+        )
+        mock_import.return_value = {"success": True, "success_count": 1, "errors": []}
+        ElasticDeploy().deploy_mdr(batch, client, tenant)
+        ndjson_arg = mock_import.call_args[0][0]
+        assert bad.metadata.uuid not in ndjson_arg
+        assert good.metadata.uuid in ndjson_arg
+
+    assert os.environ.get("DEPLOYMENT_ERROR_RAISED") == "1"

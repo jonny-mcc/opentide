@@ -8,16 +8,23 @@ import yaml
 from opentide.models.platform import ElasticConfig
 
 
-def test_elastic_config_omitted_status_defaults_to_staging() -> None:
-    config = ElasticConfig.model_validate(
-        {
-            "type": "query",
-            "query": "process.name: *",
-            "index": ["logs-*"],
-        }
-    )
-    assert config.status == "STAGING"
-    assert config.type == "query"
+def test_elastic_config_omitted_status_is_rejected() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError) as caught:
+        ElasticConfig.model_validate(
+            {
+                "type": "query",
+                "query": "process.name: *",
+                "index": ["logs-*"],
+            }
+        )
+    missing_status = [
+        error
+        for error in caught.value.errors()
+        if error["loc"] == ("status",) and error["type"] == "missing"
+    ]
+    assert missing_status
 
 
 def test_elastic_config_invalid_rfc_block_reports_all_three_codes() -> None:
@@ -25,6 +32,7 @@ def test_elastic_config_invalid_rfc_block_reports_all_three_codes() -> None:
 elastic:
   enabled: true
   schema: platform::elastic::1.0
+  status: STAGING
   type: esql
   language: kuery
   query: FROM logs-* | LIMIT 10
@@ -141,7 +149,7 @@ elastic:
 )
 def test_elastic_config_constraint_codes(constraint_code: str, block: dict) -> None:
     with pytest.raises(ValueError) as excinfo:
-        ElasticConfig.model_validate(block)
+        ElasticConfig.model_validate({"status": "STAGING", **block})
     assert constraint_code in str(excinfo.value)
 
 
@@ -149,6 +157,7 @@ def test_elastic_machine_learning_job_id_passthrough() -> None:
     # Single string job_id
     config_single = ElasticConfig.model_validate(
         {
+            "status": "STAGING",
             "type": "machine_learning",
             "machine_learning": {
                 "job_id": "rare_process_by_host",
@@ -161,6 +170,7 @@ def test_elastic_machine_learning_job_id_passthrough() -> None:
     # List job_id
     config_list = ElasticConfig.model_validate(
         {
+            "status": "STAGING",
             "type": "machine_learning",
             "machine_learning": {
                 "job_id": ["job_one", "job_two"],

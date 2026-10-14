@@ -26,10 +26,10 @@
         'name': 'defender_for_endpoint',
       }),
       dict({
-        'can_deploy': False,
-        'can_validate': False,
-        'enabled': False,
-        'name': 'elastic_security',
+        'can_deploy': True,
+        'can_validate': True,
+        'enabled': True,
+        'name': 'elastic',
       }),
       dict({
         'can_deploy': True,

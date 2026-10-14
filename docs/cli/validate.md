@@ -232,6 +232,23 @@ Query validation works on **six platforms** only:
 - `sentinel_one` (S1QL)
 - `carbon_black_cloud` (Lucene)
 
+There is no offline syntax check for any of these languages, including Elastic. A bare `validate query` refuses and names `--live`.
+
+### Elastic live validation and deploy
+
+`opentide validate query --platform elastic --live` checks each rule against the tenant. It does not parse Kuery, Lucene, EQL, or ES|QL in-process.
+
+- It warns when `scheduling.lookback` is `0m`, and when a non-aggregating ES|QL query has no `METADATA _id`.
+- It runs the Elasticsearch checks below.
+- It posts the compiled rule to Kibana `rules/_preview` with `invocationCount: 1` and a UTC `timeframeEnd`. Entries in `logs[].errors` fail the rule. `logs[].warnings`, including a missing index, are warnings. HTTP 400 is a schema error. HTTP 401 or 403, or a missing preview-index privilege, fails that tenant and the remaining rules on it are skipped.
+
+The same Elasticsearch checks run before every `opentide deploy` to Elastic, against `elasticsearch_url` with the tenant API key:
+
+- ES|QL is sent to `POST _query` with `| LIMIT 0` appended. A `parsing_exception` fails the rule, including a query Kibana would still accept on create (for example `WHER`). On `verification_exception`, the `FROM` sources (not a trailing `METADATA` clause) are resolved. An empty resolution deploys with a warning; a resolution that finds indices fails the rule.
+- Aggregation fields (`suppression.group_by`, `threshold.field`, `threshold.cardinality.field`, `new_terms.fields`) are checked with `_field_caps`. Each field must exist and be aggregatable. For ES|QL, `group_by` must be one of the pre-flight columns. Empty indices deploy with a warning. A rule with no explicit source skips the check with a warning.
+
+A rule that fails is not created or updated, and the command exits `1`. Later rules are still checked. An index pattern that matches nothing still deploys, with a warning.
+
 CrowdStrike (correlation filter) and HarfangLab (Sigma or YARA) return unsupported — never fake validation. The fields on each `configurations` block, required and optional, are the [platform specs](/docs/specifications/specs/platforms/). [Platforms](../usage/concepts/platforms.md#platform-block-schemas) links each one.
 
 The result is a normal failure envelope, so `--json` shape does not change between

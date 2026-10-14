@@ -2,6 +2,7 @@
 elastic:
   enabled: true
   schema: platform::elastic::1.0
+  status: STAGING
   type: esql
   language: kuery
   query: FROM logs-* | LIMIT 10

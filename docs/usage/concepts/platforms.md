@@ -24,6 +24,8 @@ CLI `--platform` uses **registry keys** (`defender_for_endpoint`, `carbon_black_
 
 CrowdStrike stores a correlation filter. HarfangLab stores a Sigma rule or a YARA rule. Neither language is syntax-checked: `opentide validate query` reports `supported: false`.
 
+Elastic query validation is the live tenant check only. `validate query --platform elastic --live` previews the compiled rule in Kibana and runs the Elasticsearch pre-flight (ES|QL `LIMIT 0`, then `_field_caps` on aggregation fields). The same pre-flight runs before every Elastic deploy. There is no offline syntax check. See [Validate](../../cli/validate.md#elastic-live-validation-and-deploy).
+
 Normative capability flags and the shared block: [Platforms spec](/docs/specifications/specs/platforms/).
 
 ## Platform block schemas

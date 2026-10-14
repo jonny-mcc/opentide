@@ -34,8 +34,8 @@ from opentide.models.platform_configs import (
     ElasticScheduling,
     ElasticSeverity,
     ElasticSuppression,
-    ElasticThreshold,
     ElasticThreatMatch,
+    ElasticThreshold,
     HarfangLabSigma,
     HarfangLabYara,
     SentinelAlert,
@@ -299,8 +299,11 @@ class ElasticConfig(PlatformConfigBase):
         if not isinstance(data, dict):
             return data
         raw = dict(data)
+        # Status is required on every platform. Leave it for Pydantic so a
+        # missing value is the same "missing" error as the other platforms,
+        # rather than a constraint code that hides it.
         if "status" not in raw or raw["status"] is None:
-            raw["status"] = "STAGING"
+            return raw
 
         codes: set[str] = set()
         rule_type = raw.get("type")
@@ -332,11 +335,7 @@ class ElasticConfig(PlatformConfigBase):
         ml = raw.get("machine_learning")
         if ("machine_learning" in raw) != (rule_type == "machine_learning") or (
             rule_type == "machine_learning"
-            and (
-                not isinstance(ml, dict)
-                or "job_id" not in ml
-                or "anomaly_threshold" not in ml
-            )
+            and (not isinstance(ml, dict) or "job_id" not in ml or "anomaly_threshold" not in ml)
         ):
             codes.add("type_block")
         if rule_type != "machine_learning" and not raw.get("query"):
@@ -372,7 +371,7 @@ class ElasticConfig(PlatformConfigBase):
                     shorthand and ("field" not in entry or "value" not in entry)
                 ):
                     codes.add("filter_shape")
-        for item in ((raw.get("exceptions") or {}).get("lists") or []):
+        for item in (raw.get("exceptions") or {}).get("lists") or []:
             if not isinstance(item, dict) or item.get("type") not in _EXCEPTION_TYPES:
                 codes.add("exception_type")
         actions = raw.get("actions")
@@ -425,9 +424,7 @@ class ElasticConfig(PlatformConfigBase):
                 duration_seconds(scheduling["lookback"], allow_zero=True)
             except ValueError:
                 codes.add("duration")
-        history = (
-            new_terms.get("history_window_start") if isinstance(new_terms, dict) else None
-        )
+        history = new_terms.get("history_window_start") if isinstance(new_terms, dict) else None
         for value in filter(
             None,
             (

@@ -238,14 +238,23 @@ There is no offline syntax check for any of these languages, including Elastic. 
 
 `opentide validate query --platform elastic --live` checks each rule against the tenant. It does not parse Kuery, Lucene, EQL, or ES|QL in-process.
 
-- It warns when `scheduling.lookback` is `0m`, and when a non-aggregating ES|QL query has no `METADATA _id`.
-- It runs the Elasticsearch checks below.
+- It emits configuration advisories as warnings:
+  - `overrides.timestamp` is not `event.ingested` on a non-`machine_learning` rule (querying `@timestamp` can miss alerts when event ingestion lags behind `interval + lookback`).
+  - `scheduling.lookback` is `0` (`0m`, `0s`, `PT0S`), exceeds `1h` (`scheduling.lookback` is additional overlap added to `interval`, not the total window), or exceeds `scheduling.interval` on a `threshold` rule.
+  - A non-aggregating ES|QL query has no `METADATA _id`.
+  - An explicit `risk` score falls outside the RFC 0007 band for the rule's severity (`low` `0–21`, `medium` `22–47`, `high` `48–73`, `critical` `74–100`).
+  - An EQL `sequence` `maxspan` exceeds `scheduling.interval + scheduling.lookback` or `scheduling.lookback`.
+  - The target tenant has `setup.suppression = false` while the rule configures `suppression`, or the rule references a non-Enterprise (Mobile or ICS) ATT&CK technique.
+- It runs the Elasticsearch and Kibana checks below.
 - It posts the compiled rule to Kibana `rules/_preview` with `invocationCount: 1` and a UTC `timeframeEnd`. Entries in `logs[].errors` fail the rule. `logs[].warnings`, including a missing index, are warnings. HTTP 400 is a schema error. HTTP 401 or 403, or a missing preview-index privilege, fails that tenant and the remaining rules on it are skipped.
 
-The same Elasticsearch checks run before every `opentide deploy` to Elastic, against `elasticsearch_url` with the tenant API key:
+The same Elasticsearch and Kibana checks run before every `opentide deploy` to Elastic, against `elasticsearch_url` and Kibana with the tenant API key:
 
 - ES|QL is sent to `POST _query` with `| LIMIT 0` appended. A `parsing_exception` fails the rule, including a query Kibana would still accept on create (for example `WHER`). On `verification_exception`, the `FROM` sources (not a trailing `METADATA` clause) are resolved. An empty resolution deploys with a warning; a resolution that finds indices fails the rule.
+- When `data_view_id` is set, `GET /api/data_views/data_view/{id}` resolves its index pattern. A missing data view (`404`) warns and skips mapping checks until the data view is created.
 - Aggregation fields (`suppression.group_by`, `threshold.field`, `threshold.cardinality.field`, `new_terms.fields`) are checked with `_field_caps`. Each field must exist and be aggregatable. For ES|QL, `group_by` must be one of the pre-flight columns. Empty indices deploy with a warning. A rule with no explicit source skips the check with a warning.
+- Custom timestamp fields (`overrides.timestamp`, `eql.timestamp_field`) are checked with `_field_caps`. Missing indices or fields not yet mapped emit a warning; a field mapped with a non-date type (anything other than `date` or `date_nanos`) fails the rule.
+- Indicator match (`threat_match`) mapping fields (`threat.mapping`) are checked against `threat.index` and the rule's event sources via `_field_caps`. Unonboarded indices or fields not yet mapped emit a warning; a field mapped with a non-searchable type fails the rule.
 
 A rule that fails is not created or updated, and the command exits `1`. Later rules are still checked. An index pattern that matches nothing still deploys, with a warning.
 

@@ -8,7 +8,9 @@ from opentide.platforms.config import build_system_config
 from opentide.platforms.enabled import enabled_systems
 
 
-def test_elastic_platform_loads_and_is_off_by_default(monkeypatch: pytest.MonkeyPatch, tmp_path) -> None:
+def test_elastic_platform_loads_and_is_off_by_default(
+    monkeypatch: pytest.MonkeyPatch, tmp_path
+) -> None:
     # Bundled default has enabled = false
     raw = {
         "platform": {
@@ -21,7 +23,10 @@ def test_elastic_platform_loads_and_is_off_by_default(monkeypatch: pytest.Monkey
     cfg = build_system_config("elastic", raw)
     assert cfg.platform.enabled is False
     with monkeypatch.context() as m:
-        m.setattr("opentide.platforms.enabled.resolve_configurations", lambda: {"systems": {"elastic": {"platform": {"enabled": False}}}})
+        m.setattr(
+            "opentide.platforms.enabled.resolve_configurations",
+            lambda: {"systems": {"elastic": {"platform": {"enabled": False}}}},
+        )
         assert "elastic" not in enabled_systems()
 
 

@@ -18,6 +18,7 @@ from opentide.models.deployment_enums import (
 )
 from opentide.models.rule import DetectionRule
 from opentide.models.system_config import ConfigurationModels
+from opentide.platforms.elastic.attack import find_non_enterprise_techniques
 from opentide.platforms.elastic.client import ElasticClient
 from opentide.platforms.elastic.compile import compile_rule
 from opentide.platforms.elastic.es_checks import (
@@ -108,6 +109,8 @@ class ElasticDeploy:
         tenant_config: ConfigurationModels.Systems.Elastic.Tenant | None = None,
     ) -> dict[str, Any]:
         """Compile a detection rule into an Elastic Security rule payload."""
+        if find_non_enterprise_techniques(data):
+            os.environ["DEPLOYMENT_WARNING_RAISED"] = "1"
         return compile_rule(data, tenant_config=tenant_config)
 
     def deploy_mdr(

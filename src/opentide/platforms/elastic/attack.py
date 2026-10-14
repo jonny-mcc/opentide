@@ -39,6 +39,32 @@ TACTIC_MAP: dict[str, tuple[str, str]] = {
 TACTIC_MAP["priviledge escalation"] = ("Privilege Escalation", "TA0004")
 
 
+def find_non_enterprise_techniques(data: DetectionRule) -> list[tuple[str, str]]:
+    """Return ``(technique_id, name)`` pairs for non-Enterprise ATT&CK techniques on *data*."""
+    raw_techniques: list[str] = []
+    if hasattr(data, "techniques") and data.techniques:
+        raw_techniques.extend(data.techniques)
+
+    uuid = data.metadata.uuid if data.metadata else ""
+    if getattr(data, "detection_model", None) and uuid and get_type(uuid, mute=True) is not None:
+        try:
+            inherited = techniques_resolver(uuid)
+            if inherited:
+                raw_techniques.extend(inherited)
+        except Exception:
+            pass
+
+    skipped: list[tuple[str, str]] = []
+    for tech_id in dict.fromkeys(raw_techniques):
+        entry = _cached_get_vocab_entry("att&ck", tech_id)
+        if not entry:
+            continue
+        name = entry.get("name", "")
+        if name.startswith(NON_ENTERPRISE_PREFIXES):
+            skipped.append((tech_id, name))
+    return skipped
+
+
 def resolve_elastic_threat(data: DetectionRule) -> list[dict[str, Any]]:
     """Map rule techniques to Elastic Security threat array format per RFC 0007."""
     raw_techniques: list[str] = []

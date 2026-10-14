@@ -344,9 +344,7 @@ def compile_rule(
     body["tags"] = list(dict.fromkeys(["OpenTide", *tenant_tags, *block_tags]))
 
     # Author
-    author_list = filter(
-        None, [metadata.get("author"), *(metadata.get("contributors") or [])]
-    )
+    author_list = filter(None, [metadata.get("author"), *(metadata.get("contributors") or [])])
     authors = list(dict.fromkeys(author_list))
     if authors:
         body["author"] = authors

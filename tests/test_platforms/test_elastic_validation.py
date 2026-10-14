@@ -13,9 +13,14 @@ from opentide.models.deployment_enums import DeploymentStrategy
 from opentide.models.system_config import ConfigurationModels
 from opentide.platforms.elastic.client import ElasticClient
 from opentide.platforms.elastic.es_checks import (
+    ElasticRuleCheckError,
+    ElasticTenantError,
     esql_from_sources,
+    resolve_rule_sources,
     run_aggregation_fields_check,
     run_esql_preflight,
+    run_threat_match_fields_check,
+    run_timestamp_fields_check,
 )
 from opentide.platforms.elastic.validator import ElasticValidator
 
@@ -204,9 +209,17 @@ def _elastic_rule(
     uuid: str,
     *,
     rule_type: str = "query",
-    query: str = "process.name: *",
+    query: str | None = "process.name: *",
+    interval: str = "5m",
     lookback: str | None = None,
     index: list[str] | None = None,
+    overrides: dict | None = ...,
+    risk: int | dict | None = None,
+    suppression: dict | None = None,
+    threshold: dict | None = None,
+    machine_learning: dict | None = None,
+    techniques: list[str] | None = None,
+    alert_severity: str = "High",
 ) -> object:
     from opentide.loading.rule_loader import load_rule_from_dict
 
@@ -215,12 +228,26 @@ def _elastic_rule(
         "schema": "platform::elastic::1.0",
         "status": "STAGING",
         "type": rule_type,
-        "query": query,
     }
+    if rule_type != "machine_learning" and query is not None:
+        elastic["query"] = query
     if rule_type not in ("esql", "machine_learning"):
         elastic["index"] = index or ["logs-*"]
-    if lookback is not None:
-        elastic["scheduling"] = {"interval": "5m", "lookback": lookback}
+    if lookback is not None or interval != "5m":
+        elastic["scheduling"] = {"interval": interval, "lookback": lookback or "1m"}
+    if overrides is ...:
+        if rule_type != "machine_learning":
+            elastic["overrides"] = {"timestamp": "event.ingested"}
+    elif overrides is not None:
+        elastic["overrides"] = overrides
+    if risk is not None:
+        elastic["risk"] = risk
+    if suppression is not None:
+        elastic["suppression"] = suppression
+    if threshold is not None:
+        elastic["threshold"] = threshold
+    if machine_learning is not None:
+        elastic["machine_learning"] = machine_learning
     return load_rule_from_dict(
         {
             "name": name,
@@ -234,8 +261,8 @@ def _elastic_rule(
                 "author": "Author",
             },
             "description": "Test description",
-            "techniques": [],
-            "response": {"alert_severity": "High"},
+            "techniques": techniques or [],
+            "response": {"alert_severity": alert_severity},
             "configurations": {"elastic": elastic},
         }
     )
@@ -397,3 +424,303 @@ def test_validator_preview_403_skips_the_rest_of_the_tenant(
         validator.validate([first, second])
     assert mock_preview.call_count == 1
     assert os.environ.get("VALIDATION_ERROR_RAISED") == "1"
+
+
+@patch("opentide.platforms.elastic.validator.run_elasticsearch_checks", return_value=[])
+def test_validator_warns_when_timestamp_override_missing_on_non_ml_rule(
+    _mock_checks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_validation_flags(monkeypatch)
+    rule = _elastic_rule(
+        "No Timestamp Override",
+        "00000000-0000-4000-8003-000000000007",
+        overrides=None,
+    )
+    batch = MagicMock(tenant=_tenant(), rules=[rule])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([rule])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
+
+    # Machine learning rules do not warn when overrides.timestamp is omitted
+    _clear_validation_flags(monkeypatch)
+    ml_rule = _elastic_rule(
+        "ML Rule",
+        "00000000-0000-4000-8003-000000000008",
+        rule_type="machine_learning",
+        query=None,
+        overrides=None,
+        machine_learning={"job_id": "anomaly_job", "anomaly_threshold": 75},
+    )
+    ml_batch = MagicMock(tenant=_tenant(), rules=[ml_rule])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [ml_batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([ml_rule])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") is None
+
+
+@pytest.mark.parametrize(
+    ("rule_type", "interval", "lookback", "threshold_cfg"),
+    [
+        ("query", "5m", "0s", None),
+        ("query", "5m", "PT0S", None),
+        ("query", "5m", "2h", None),
+        ("threshold", "5m", "10m", {"field": ["user.name"], "value": 5}),
+    ],
+)
+@patch("opentide.platforms.elastic.validator.run_elasticsearch_checks", return_value=[])
+def test_validator_warns_on_zero_or_long_lookback(
+    _mock_checks,
+    monkeypatch: pytest.MonkeyPatch,
+    rule_type: str,
+    interval: str,
+    lookback: str,
+    threshold_cfg: dict | None,
+) -> None:
+    _clear_validation_flags(monkeypatch)
+    rule = _elastic_rule(
+        "Schedule Check",
+        "00000000-0000-4000-8003-000000000010",
+        rule_type=rule_type,
+        interval=interval,
+        lookback=lookback,
+        threshold=threshold_cfg,
+    )
+    batch = MagicMock(tenant=_tenant(), rules=[rule])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([rule])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
+
+
+@patch("opentide.platforms.elastic.validator.run_elasticsearch_checks", return_value=[])
+def test_validator_warns_when_risk_score_outside_severity_band(
+    _mock_checks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_validation_flags(monkeypatch)
+    # High severity expects 48-73; 20 is in the low band
+    out_of_band = _elastic_rule(
+        "Mismatched Risk",
+        "00000000-0000-4000-8003-000000000011",
+        alert_severity="High",
+        risk=20,
+    )
+    batch = MagicMock(tenant=_tenant(), rules=[out_of_band])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([out_of_band])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
+
+    _clear_validation_flags(monkeypatch)
+    in_band = _elastic_rule(
+        "Matched Risk",
+        "00000000-0000-4000-8003-000000000012",
+        alert_severity="High",
+        risk=68,
+    )
+    batch_ok = MagicMock(tenant=_tenant(), rules=[in_band])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [batch_ok]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([in_band])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") is None
+
+
+@pytest.mark.parametrize(
+    ("maxspan", "interval", "lookback", "should_warn"),
+    [
+        ("15m", "5m", "1m", True),  # maxspan > interval + lookback
+        ("3m", "5m", "1m", True),  # maxspan > lookback
+        ("2m", "5m", "5m", False),  # maxspan <= lookback
+    ],
+)
+@patch("opentide.platforms.elastic.validator.run_elasticsearch_checks", return_value=[])
+def test_validator_eql_maxspan_vs_schedule_window(
+    _mock_checks,
+    monkeypatch: pytest.MonkeyPatch,
+    maxspan: str,
+    interval: str,
+    lookback: str,
+    should_warn: bool,
+) -> None:
+    _clear_validation_flags(monkeypatch)
+    query = (
+        f"sequence by host.id with maxspan={maxspan}\n"
+        '  [process where event.type == "start"]\n'
+        '  [network where event.type == "start"]'
+    )
+    rule = _elastic_rule(
+        "EQL Sequence",
+        "00000000-0000-4000-8003-000000000013",
+        rule_type="eql",
+        query=query,
+        interval=interval,
+        lookback=lookback,
+    )
+    batch = MagicMock(tenant=_tenant(), rules=[rule])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([rule])
+    if should_warn:
+        assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
+    else:
+        assert os.environ.get("VALIDATION_WARNING_RAISED") is None
+
+
+@patch("opentide.platforms.elastic.validator.run_elasticsearch_checks", return_value=[])
+def test_validator_warns_on_basic_license_suppression_and_ics_technique(
+    _mock_checks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_validation_flags(monkeypatch)
+    tenant = _tenant()
+    tenant.setup.suppression = False
+    rule = _elastic_rule(
+        "Basic Tenant Rule",
+        "00000000-0000-4000-8003-000000000014",
+        suppression={"group_by": ["host.name"], "duration": "1h"},
+    )
+    batch = MagicMock(tenant=tenant, rules=[rule])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([rule])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
+
+    # Non-Enterprise ATT&CK technique (T0807 is ICS) sets warning flag
+    _clear_validation_flags(monkeypatch)
+    ics_rule = _elastic_rule(
+        "ICS Technique Rule",
+        "00000000-0000-4000-8003-000000000015",
+        techniques=["T0807"],
+    )
+    ics_batch = MagicMock(tenant=_tenant(), rules=[ics_rule])
+    with (
+        patch("opentide.platforms.elastic.validator.TideDeployment") as mock_deployment,
+        patch.object(ElasticClient, "preview_rule") as mock_preview,
+    ):
+        mock_deployment.return_value.rule_deployment = [ics_batch]
+        mock_preview.return_value = _mock_response(200, json_data={"logs": []})
+        ElasticValidator().validate([ics_rule])
+    assert os.environ.get("VALIDATION_WARNING_RAISED") == "1"
+
+
+def test_resolve_rule_sources_data_view_404_warns_and_403_raises() -> None:
+    client = ElasticClient(url="https://kibana.test", elasticsearch_url="https://es.test")
+    block = {"type": "query", "query": "process.name: *", "data_view_id": "missing-dv"}
+    warnings: list[str] = []
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.return_value = _mock_response(404, json_data={"message": "Not found"})
+        sources, has_explicit = resolve_rule_sources(client, block, warnings=warnings)
+    assert sources is None
+    assert has_explicit is True
+    assert any("missing-dv" in w for w in warnings)
+
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.return_value = _mock_response(403, text="Forbidden")
+        with pytest.raises(ElasticTenantError, match="HTTP 403"):
+            resolve_rule_sources(client, block)
+
+
+def test_timestamp_fields_check_non_date_fails_and_missing_warns() -> None:
+    client = ElasticClient(url="https://kibana.test", elasticsearch_url="https://es.test")
+    block = {
+        "type": "query",
+        "query": "process.name: *",
+        "index": ["logs-*"],
+        "overrides": {"timestamp": "event.ingested"},
+    }
+    # 1. Non-date type (keyword) fails with ElasticRuleCheckError
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.return_value = _mock_response(
+            200,
+            json_data={
+                "indices": ["logs-2026.10"],
+                "fields": {"event.ingested": {"keyword": {"type": "keyword", "searchable": True}}},
+            },
+        )
+        with pytest.raises(ElasticRuleCheckError, match="not a date/date_nanos field"):
+            run_timestamp_fields_check(client, block)
+
+    # 2. Missing field in mappings emits a warning instead of failing
+    warnings: list[str] = []
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.return_value = _mock_response(
+            200,
+            json_data={"indices": ["logs-2026.10"], "fields": {}},
+        )
+        run_timestamp_fields_check(client, block, warnings=warnings)
+    assert any("event.ingested" in w for w in warnings)
+
+
+def test_threat_match_fields_check_unonboarded_warns_and_non_searchable_fails() -> None:
+    client = ElasticClient(url="https://kibana.test", elasticsearch_url="https://es.test")
+    block = {
+        "type": "threat_match",
+        "query": 'event.category : "file"',
+        "index": ["logs-endpoint.events.file-*"],
+        "threat": {
+            "index": ["logs-ti_abusech.malware-*"],
+            "query": 'threat.indicator.type : "file"',
+            "mapping": [
+                {
+                    "entries": [
+                        {
+                            "field": "file.hash.sha256",
+                            "value": "threat.indicator.file.hash.sha256",
+                        }
+                    ]
+                }
+            ],
+        },
+    }
+    # 1. Unonboarded threat.index and missing event field warn without failing
+    warnings: list[str] = []
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.side_effect = [
+            _mock_response(200, json_data={"indices": [], "fields": {}}),
+            _mock_response(200, json_data={"indices": ["logs-endpoint-1"], "fields": {}}),
+        ]
+        run_threat_match_fields_check(client, block, warnings=warnings)
+    assert len(warnings) == 2
+
+    # 2. Non-searchable indicator field raises ElasticRuleCheckError
+    with patch.object(client.session, "get") as mock_get:
+        mock_get.return_value = _mock_response(
+            200,
+            json_data={
+                "indices": ["logs-ti-1"],
+                "fields": {
+                    "threat.indicator.file.hash.sha256": {
+                        "binary": {"type": "binary", "searchable": False}
+                    }
+                },
+            },
+        )
+        with pytest.raises(ElasticRuleCheckError, match="not searchable"):
+            run_threat_match_fields_check(client, block)

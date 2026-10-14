@@ -12,6 +12,7 @@ from opentide.platforms.elastic.client import ElasticClient
 _FROM_PATTERN = re.compile(r"(?i)\bFROM\s+(.+)")
 _SOURCE_CUT = re.compile(r"(?i)\s*(?:\||\bMETADATA\b)")
 _LINE_COMMENT = re.compile(r"//.*")
+_DATE_FIELD_TYPES = frozenset({"date", "date_nanos"})
 
 
 class ElasticRuleCheckError(ValueError):
@@ -67,6 +68,58 @@ def _note(warnings: list[str] | None, message: str) -> None:
         warnings.append(message)
 
 
+def resolve_rule_sources(
+    client: ElasticClient,
+    block: dict[str, Any],
+    setup_index: list[str] | None = None,
+    warnings: list[str] | None = None,
+) -> tuple[str | None, bool]:
+    """Resolve index patterns for a rule block, checking ``data_view_id`` in Kibana when set.
+
+    Returns ``(sources, has_explicit_source)``. Missing data views (HTTP 404) are
+    recorded as a warning so rules can be authored before data onboarding; HTTP
+    401/403 raises :class:`ElasticTenantError`.
+    """
+    rule_type = block.get("type", "query")
+    if rule_type == "machine_learning":
+        return None, False
+    if rule_type == "esql":
+        sources = esql_from_sources(str(block.get("query") or ""))
+        return (sources or None), bool(sources)
+
+    data_view_id = block.get("data_view_id")
+    if data_view_id:
+        resp = client.get_data_view_response(str(data_view_id))
+        if resp.status_code in (401, 403):
+            raise ElasticTenantError(
+                f"Kibana data_view '{data_view_id}' lookup failed: HTTP {resp.status_code}"
+            )
+        if resp.status_code == 404:
+            _note(
+                warnings,
+                f"Data view '{data_view_id}' not found in Kibana space; "
+                "skipping mapping checks until onboarded",
+            )
+            return None, True
+        if resp.status_code != 200:
+            _note(
+                warnings,
+                f"Data view '{data_view_id}' lookup failed (HTTP {resp.status_code}); "
+                "skipping mapping checks",
+            )
+            return None, True
+        data_view = resp.json()
+        dv_obj = (data_view.get("data_view") or data_view) if isinstance(data_view, dict) else {}
+        title = dv_obj.get("title") if isinstance(dv_obj, dict) else None
+        return (str(title) if title else None), True
+
+    if block.get("index"):
+        return ",".join(block["index"]), True
+    if setup_index:
+        return ",".join(setup_index), True
+    return None, False
+
+
 def run_esql_preflight(
     client: ElasticClient,
     query: str,
@@ -116,6 +169,7 @@ def run_aggregation_fields_check(
     setup_index: list[str] | None = None,
     esql_columns: list[dict[str, Any]] | None = None,
     warnings: list[str] | None = None,
+    resolved_sources: tuple[str | None, bool] | None = None,
 ) -> None:
     """Verify aggregation fields exist and are aggregatable.
 
@@ -165,17 +219,14 @@ def run_aggregation_fields_check(
                     )
         return
 
-    sources: str | None = None
-    if block.get("data_view_id"):
-        data_view = client.get_data_view(block["data_view_id"])
-        if data_view:
-            dv_obj = data_view.get("data_view") or data_view
-            sources = dv_obj.get("title")
-    elif block.get("index"):
-        sources = ",".join(block["index"])
-    elif setup_index:
-        sources = ",".join(setup_index)
+    if resolved_sources is None:
+        sources, has_explicit = resolve_rule_sources(
+            client, block, setup_index=setup_index, warnings=warnings
+        )
     else:
+        sources, has_explicit = resolved_sources
+
+    if not has_explicit:
         _note(
             warnings,
             "aggregation field check skipped: rule has no explicit index, "
@@ -214,6 +265,175 @@ def run_aggregation_fields_check(
             )
 
 
+def run_timestamp_fields_check(
+    client: ElasticClient,
+    block: dict[str, Any],
+    setup_index: list[str] | None = None,
+    warnings: list[str] | None = None,
+    resolved_sources: tuple[str | None, bool] | None = None,
+) -> None:
+    """Verify custom timestamp fields have ``date`` or ``date_nanos`` mappings in Elasticsearch.
+
+    When indices or fields are not yet present in mappings, a warning is
+    recorded so rules can be validated before data is onboarded. When a field
+    is mapped as a non-date type (e.g. ``keyword`` or ``long``), raises
+    :class:`ElasticRuleCheckError`.
+    """
+    overrides = block.get("overrides") or {}
+    ts_override = overrides.get("timestamp") if isinstance(overrides, dict) else None
+    eql = block.get("eql") or {}
+    eql_ts = eql.get("timestamp_field") if isinstance(eql, dict) else None
+
+    ts_fields = list(
+        dict.fromkeys(
+            str(field) for field in (ts_override, eql_ts) if field and str(field) != "@timestamp"
+        )
+    )
+    if not ts_fields:
+        return
+
+    if resolved_sources is None:
+        sources, _ = resolve_rule_sources(client, block, setup_index=setup_index, warnings=warnings)
+    else:
+        sources, _ = resolved_sources
+
+    if not sources:
+        return
+
+    resp = client.field_caps(sources, ts_fields)
+    _raise_if_unauthorized(resp, "_field_caps")
+    if resp.status_code != 200:
+        _note(warnings, f"timestamp field capabilities check failed (HTTP {resp.status_code})")
+        return
+
+    caps_data = resp.json()
+    indices = caps_data.get("indices", [])
+    if isinstance(indices, list) and not indices:
+        _note(warnings, f"timestamp sources not onboarded yet: {sources}")
+        return
+
+    fields_caps = caps_data.get("fields", {})
+    for field_name in ts_fields:
+        if field_name not in fields_caps:
+            _note(
+                warnings,
+                f"Timestamp field '{field_name}' not found in mappings yet for sources: {sources}",
+            )
+            continue
+        type_caps = fields_caps[field_name]
+        is_date = isinstance(type_caps, dict) and any(
+            field_type in _DATE_FIELD_TYPES
+            or (isinstance(cap, dict) and cap.get("type") in _DATE_FIELD_TYPES)
+            for field_type, cap in type_caps.items()
+        )
+        if not is_date:
+            found = (
+                ", ".join(sorted(type_caps.keys()))
+                if isinstance(type_caps, dict) and type_caps
+                else "unknown"
+            )
+            raise ElasticRuleCheckError(
+                f"Timestamp field '{field_name}' is not a date/date_nanos field "
+                f"(found: {found}) in sources: {sources}"
+            )
+
+
+def _check_searchable_fields(
+    client: ElasticClient,
+    sources: str,
+    fields: list[str],
+    label: str,
+    warnings: list[str] | None,
+) -> None:
+    resp = client.field_caps(sources, fields)
+    _raise_if_unauthorized(resp, "_field_caps")
+    if resp.status_code != 200:
+        _note(warnings, f"{label} field capabilities check failed (HTTP {resp.status_code})")
+        return
+
+    caps_data = resp.json()
+    indices = caps_data.get("indices", [])
+    if isinstance(indices, list) and not indices:
+        _note(warnings, f"{label} sources not onboarded yet: {sources}")
+        return
+
+    fields_caps = caps_data.get("fields", {})
+    for field_name in fields:
+        if field_name not in fields_caps:
+            _note(
+                warnings,
+                f"{label} field '{field_name}' not found in mappings yet for sources: {sources}",
+            )
+            continue
+        type_caps = fields_caps[field_name]
+        is_searchable = isinstance(type_caps, dict) and any(
+            isinstance(cap, dict) and cap.get("searchable") is True for cap in type_caps.values()
+        )
+        if not is_searchable:
+            raise ElasticRuleCheckError(
+                f"{label} field '{field_name}' is not searchable in sources: {sources}"
+            )
+
+
+def run_threat_match_fields_check(
+    client: ElasticClient,
+    block: dict[str, Any],
+    setup_index: list[str] | None = None,
+    warnings: list[str] | None = None,
+    resolved_sources: tuple[str | None, bool] | None = None,
+) -> None:
+    """Verify ``threat_match`` event and indicator mapping fields via ``_field_caps``.
+
+    Missing indices or unmapped fields are recorded as warnings so rules can be
+    validated before threat-intel feeds or event integrations are onboarded.
+    Fields mapped with a non-searchable type raise :class:`ElasticRuleCheckError`.
+    """
+    if block.get("type") != "threat_match":
+        return
+    threat = block.get("threat")
+    if not isinstance(threat, dict):
+        return
+
+    event_fields: list[str] = []
+    indicator_fields: list[str] = []
+    for group in threat.get("mapping") or []:
+        if not isinstance(group, dict):
+            continue
+        for entry in group.get("entries") or []:
+            if not isinstance(entry, dict):
+                continue
+            if entry.get("field"):
+                event_fields.append(str(entry["field"]))
+            if entry.get("value"):
+                indicator_fields.append(str(entry["value"]))
+
+    event_fields = list(dict.fromkeys(filter(None, event_fields)))
+    indicator_fields = list(dict.fromkeys(filter(None, indicator_fields)))
+
+    threat_indices = threat.get("index") or []
+    threat_sources = (
+        ",".join(str(idx) for idx in threat_indices if idx)
+        if isinstance(threat_indices, list)
+        else ""
+    )
+    if threat_sources and indicator_fields:
+        _check_searchable_fields(
+            client, threat_sources, indicator_fields, "Threat indicator", warnings
+        )
+
+    if event_fields:
+        if resolved_sources is None:
+            event_sources, _ = resolve_rule_sources(
+                client, block, setup_index=setup_index, warnings=warnings
+            )
+        else:
+            event_sources, _ = resolved_sources
+        if event_sources:
+            _check_searchable_fields(
+                client, event_sources, event_fields, "Threat match event", warnings
+            )
+
+
 def run_elasticsearch_checks(
     client: ElasticClient,
     block: dict[str, Any],
@@ -227,11 +447,33 @@ def run_elasticsearch_checks(
     if rule_type == "esql" and block.get("query"):
         esql_columns = run_esql_preflight(client, block["query"], warnings)
 
+    resolved = resolve_rule_sources(
+        client,
+        block,
+        setup_index=setup_index,
+        warnings=warnings,
+    )
+
     run_aggregation_fields_check(
         client,
         block,
         setup_index=setup_index,
         esql_columns=esql_columns,
         warnings=warnings,
+        resolved_sources=resolved,
+    )
+    run_timestamp_fields_check(
+        client,
+        block,
+        setup_index=setup_index,
+        warnings=warnings,
+        resolved_sources=resolved,
+    )
+    run_threat_match_fields_check(
+        client,
+        block,
+        setup_index=setup_index,
+        warnings=warnings,
+        resolved_sources=resolved,
     )
     return warnings

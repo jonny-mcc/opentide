@@ -130,9 +130,7 @@ class ElasticClient:
             "overwrite_exceptions": str(overwrite_exceptions).lower(),
             "overwrite_action_connectors": str(overwrite_action_connectors).lower(),
         }
-        payload_bytes = (
-            ndjson_data.encode("utf-8") if isinstance(ndjson_data, str) else ndjson_data
-        )
+        payload_bytes = ndjson_data.encode("utf-8") if isinstance(ndjson_data, str) else ndjson_data
         files = {"file": ("rules.ndjson", payload_bytes, "application/x-ndjson")}
         headers = {"kbn-xsrf": "true", "Content-Type": None}
         resp = self.session.post(
@@ -172,10 +170,14 @@ class ElasticClient:
             return data.get("data", [])
         return []
 
+    def get_data_view_response(self, data_view_id: str) -> requests.Response:
+        """Retrieve the raw HTTP response for a Kibana Data View by id."""
+        url = self._kibana_url(f"/api/data_views/data_view/{data_view_id}")
+        return self.session.get(url, timeout=self.timeout)
+
     def get_data_view(self, data_view_id: str) -> dict[str, Any] | None:
         """Retrieve a Kibana Data View by id."""
-        url = self._kibana_url(f"/api/data_views/data_view/{data_view_id}")
-        resp = self.session.get(url, timeout=self.timeout)
+        resp = self.get_data_view_response(data_view_id)
         if resp.status_code == 200:
             return resp.json()
         return None

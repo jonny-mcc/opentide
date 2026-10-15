@@ -12,8 +12,10 @@ import yaml
 
 logger = structlog.get_logger(__name__)
 
-# Dedicated OpenTide namespace UUID (uuid5(NAMESPACE_URL, "https://opentide.org/ns/elastic-rule-migration"))
-OPENTIDE_MIGRATION_NS = uuid.UUID("c3a9b752-91e4-5f1d-b0a8-2c7e4f8d1b63")
+# Dedicated OpenTide namespace for UUIDs derived from prebuilt Elastic rule_ids.
+OPENTIDE_MIGRATION_NS = uuid.uuid5(
+    uuid.NAMESPACE_URL, "https://opentide.org/ns/elastic-rule-migration"
+)
 
 _VALID_FIELD_TYPES = frozenset(
     {
@@ -106,10 +108,24 @@ def _is_prebuilt(rule: dict[str, Any]) -> bool:
     return bool(rule.get("immutable") or rule.get("rule_source", {}).get("type") == "external")
 
 
+def _date_math_duration(value: Any) -> str:
+    """Kibana ``now-<n><unit>`` to an RFC 0007 duration. Kibana accepts weeks; RFC 0007 does not."""
+    text = str(value).strip().removeprefix("now-")
+    if text.endswith("w") and text[:-1].isdigit():
+        return f"{int(text[:-1]) * 7}d"
+    return text
+
+
+def _only(entry: dict[str, Any], keys: tuple[str, ...]) -> dict[str, Any]:
+    """Keep the keys the RFC 0007 sub-model declares; Kibana returns extras it forbids."""
+    return {key: entry[key] for key in keys if key in entry}
+
+
 def _extract_filter(entry: dict[str, Any]) -> dict[str, Any]:
     meta = entry.get("meta") or {}
     query_val = meta.get("params", {}).get("query")
-    if meta.get("type") == "phrase" and meta.get("key") and query_val:
+    # The shorthand compiles to disabled: false, so a disabled filter stays raw.
+    if meta.get("type") == "phrase" and meta.get("key") and query_val and not meta.get("disabled"):
         return {
             "field": meta["key"],
             "value": str(query_val),
@@ -197,19 +213,33 @@ def kibana_to_opentide(
         elif rule.get("index"):
             elastic_block["index"] = list(rule["index"])
 
-    # Scheduling
+    # Scheduling: Kibana from = now-(interval + lookback) (RFC 0007 §3 Schedule)
+    from opentide.platforms.elastic.durations import duration_seconds, format_duration
+
     interval = rule.get("interval", "5m")
     from_val = rule.get("from", "now-6m")
-    lookback = "1m"
     try:
-        from opentide.platforms.elastic.durations import duration_seconds, format_duration
-
-        total_secs = duration_seconds(from_val.removeprefix("now-"))
+        total_secs = duration_seconds(_date_math_duration(from_val), allow_zero=True)
         interval_secs = duration_seconds(interval)
-        if total_secs >= interval_secs:
-            lookback = format_duration(total_secs - interval_secs)
-    except Exception:
-        pass
+    except ValueError:
+        logger.warning(
+            "elastic_import_schedule_defaulted",
+            rule=rule.get("name"),
+            interval=interval,
+            **{"from": from_val},
+        )
+        lookback = "1m"
+    else:
+        if total_secs < interval_secs:
+            # The look-back window is shorter than the interval; RFC 0007 cannot
+            # express that, so the closest window is lookback 0m (from = interval).
+            logger.warning(
+                "elastic_import_window_widened",
+                rule=rule.get("name"),
+                interval=interval,
+                **{"from": from_val},
+            )
+        lookback = format_duration(max(total_secs - interval_secs, 0))
 
     scheduling_dict: dict[str, Any] = {
         "interval": interval,
@@ -223,13 +253,18 @@ def kibana_to_opentide(
     if rule.get("severity_mapping"):
         elastic_block["severity"] = {
             "default": alert_severity,
-            "mapping": copy.deepcopy(rule["severity_mapping"]),
+            "mapping": [
+                _only(m, ("field", "value", "operator", "severity"))
+                for m in rule["severity_mapping"]
+            ],
         }
     if rule.get("risk_score") is not None:
         if rule.get("risk_score_mapping"):
             elastic_block["risk"] = {
                 "score": rule["risk_score"],
-                "mapping": copy.deepcopy(rule["risk_score_mapping"]),
+                "mapping": [
+                    _only(m, ("field", "operator", "value")) for m in rule["risk_score_mapping"]
+                ],
             }
         else:
             elastic_block["risk"] = rule["risk_score"]
@@ -258,7 +293,7 @@ def kibana_to_opentide(
             elastic_block["filters"] = filters_out
 
     # Highlighted fields
-    inv_fields = rule.get("investigation_fields", {}).get("field_names") or []
+    inv_fields = (rule.get("investigation_fields") or {}).get("field_names") or []
     if inv_fields:
         elastic_block["highlighted_fields"] = list(inv_fields)
 
@@ -267,9 +302,16 @@ def kibana_to_opentide(
         req_fields = []
         for rf in rule["required_fields"]:
             if isinstance(rf, dict) and rf.get("name"):
-                rf_type = rf.get("type", "keyword")
+                rf_type = rf.get("type")
                 if rf_type not in _VALID_FIELD_TYPES:
-                    rf_type = "keyword"
+                    # FieldType is closed in RFC 0007; never relabel a field's type.
+                    logger.warning(
+                        "elastic_import_required_field_dropped",
+                        rule=rule.get("name"),
+                        field=rf["name"],
+                        type=rf_type,
+                    )
+                    continue
                 req_fields.append({"name": rf["name"], "type": rf_type})
         if req_fields:
             elastic_block["required_fields"] = req_fields
@@ -279,14 +321,13 @@ def kibana_to_opentide(
         rel_ints = []
         for ri in rule["related_integrations"]:
             if isinstance(ri, dict) and ri.get("package"):
-                if ri.get("integration"):
-                    rel_ints.append(
-                        {
-                            "package": ri["package"],
-                            "integration": ri["integration"],
-                            "version": ri.get("version", "*"),
-                        }
-                    )
+                version = ri.get("version") or "*"
+                if ri.get("integration") or version != "*":
+                    # The string shorthand compiles to version "*"; keep any real range.
+                    item = {"package": ri["package"], "version": version}
+                    if ri.get("integration"):
+                        item["integration"] = ri["integration"]
+                    rel_ints.append(item)
                 else:
                     rel_ints.append(ri["package"])
         if rel_ints:
@@ -331,11 +372,21 @@ def kibana_to_opentide(
             params = ra.get("params") or {}
             if aid == ".endpoint":
                 cmd = params.get("command")
+                if cmd not in ("isolate", "kill-process", "suspend-process", "runscript"):
+                    # RFC 0007 response_action allows only these; drop the action, keep the rule.
+                    logger.warning(
+                        "skipping_unsupported_endpoint_response_action",
+                        rule=rule_name,
+                        command=cmd,
+                    )
+                    continue
                 act_item = {"endpoint": cmd}
                 if params.get("comment"):
                     act_item["comment"] = params["comment"]
-                if params.get("config", {}).get("field"):
-                    act_item["field"] = params["config"]["field"]
+                config = params.get("config") or {}
+                # overwrite: true is Kibana's default field; only a custom field is authored.
+                if config.get("field") and not config.get("overwrite"):
+                    act_item["field"] = config["field"]
                 resp_actions.append(act_item)
             elif aid == ".osquery":
                 if isinstance(params, dict) and params.get("query"):
@@ -383,8 +434,12 @@ def kibana_to_opentide(
         if isinstance(card_list, list) and card_list:
             c0 = card_list[0]
             t_card = {"field": c0.get("field"), "value": c0.get("value")}
+        t_field = t_in.get("field") or []
+        if isinstance(t_field, str):
+            # Kibana's ThresholdField is a string or a list; list("a.b") splits it into letters.
+            t_field = [t_field]
         elastic_block["threshold"] = {
-            "field": list(t_in.get("field") or []),
+            "field": list(t_field),
             "value": t_in.get("value", 1),
             "cardinality": t_card,
         }
@@ -393,7 +448,7 @@ def kibana_to_opentide(
         raw_hist = str(rule.get("history_window_start", "now-14d"))
         elastic_block["new_terms"] = {
             "fields": list(rule.get("new_terms_fields") or []),
-            "history_window_start": raw_hist.removeprefix("now-"),
+            "history_window_start": _date_math_duration(raw_hist),
         }
 
     if rule_type == "eql":
@@ -476,6 +531,24 @@ def kibana_to_opentide(
     return _clean_empty(doc)
 
 
+def _unwritable_reason(doc: dict[str, Any]) -> str | None:
+    """Why *doc* must not be written, or None. Every written file must load as rule::1.0."""
+    rule_id = str(doc.get("metadata", {}).get("uuid", ""))
+    try:
+        uuid.UUID(rule_id)
+    except ValueError:
+        # RFC 0007 §2 decision 4: identity is the MDR UUID, sent as rule_id.
+        # Deriving a new one would deploy a duplicate next to the existing rule.
+        return f"Kibana rule_id {rule_id!r} is not a UUID"
+    from opentide.loading.rule_loader import load_rule_from_dict
+
+    try:
+        load_rule_from_dict(copy.deepcopy(doc))
+    except Exception as exc:  # unsupported shape, e.g. a saved_query rule
+        return f"does not validate as platform::elastic::1.0: {str(exc).splitlines()[0]}"
+    return None
+
+
 def run(
     destination: Path = Path("Imported"),
     space: str = "default",
@@ -496,8 +569,12 @@ def run(
 
     tenant = next(
         (t for t in elastic_config.tenants if getattr(t.setup, "space", "default") == space),
-        elastic_config.tenants[0],
+        None,
     )
+    if tenant is None:
+        # Never fall back to another tenant: that exports a different space
+        # while the result still reports the requested one.
+        raise RuntimeError(f"No Elastic tenant is configured for Kibana space '{space}'")
 
     client = ElasticClient(
         url=tenant.setup.url,
@@ -515,6 +592,7 @@ def run(
     total_extracted = 0
     exported_rules: list[dict[str, Any]] = []
     written: set[str] = set()
+    skipped: list[dict[str, str]] = []
 
     while True:
         resp = client.find_rules(page=page, per_page=per_page)
@@ -530,6 +608,11 @@ def run(
                 continue
 
             doc = kibana_to_opentide(rule, make_custom=make_custom)
+            reason = _unwritable_reason(doc)
+            if reason:
+                logger.warning("elastic_import_rule_skipped", rule=doc.get("name"), reason=reason)
+                skipped.append({"name": str(doc.get("name")), "reason": reason})
+                continue
             # Rule names are not unique in Kibana; never overwrite a file from this run.
             stem = sanitize_filename(doc["name"])
             if stem.lower() in written:
@@ -557,5 +640,6 @@ def run(
         "tenant": tenant.name,
         "space": space,
         "extracted_count": total_extracted,
+        "skipped": skipped,
         "destination": str(dest_dir),
     }

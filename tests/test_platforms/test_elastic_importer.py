@@ -6,6 +6,7 @@ import uuid
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import pytest
 import yaml
 
 from opentide.extraction.elastic_importer import (
@@ -132,3 +133,166 @@ def test_run_disambiguates_duplicate_filenames_and_filters_prebuilt(tmp_path: Pa
     for path in tmp_path.glob("*.yaml"):
         loaded = load_rule_from_dict(yaml.safe_load(path.read_text(encoding="utf-8")))
         assert loaded.configurations.elastic is not None
+
+
+def test_migration_namespace_matches_its_documented_derivation() -> None:
+    assert (
+        uuid.uuid5(uuid.NAMESPACE_URL, "https://opentide.org/ns/elastic-rule-migration")
+        == OPENTIDE_MIGRATION_NS
+    )
+
+
+def _recompiled(rule: dict) -> dict:
+    from opentide.platforms.elastic.compile import compile_rule
+
+    return compile_rule(kibana_to_opentide(rule), {"setup": {}})
+
+
+def test_disabled_filter_stays_disabled() -> None:
+    rule = _sample_kibana_rule()
+    rule["filters"][0]["meta"]["disabled"] = True
+    assert _recompiled(rule)["filters"][0]["meta"]["disabled"] is True
+
+
+def test_integration_version_range_is_kept() -> None:
+    rule = _sample_kibana_rule()
+    rule["related_integrations"] = [{"package": "windows", "version": "^2.0.0"}]
+    assert _recompiled(rule)["related_integrations"] == [
+        {"package": "windows", "version": "^2.0.0"}
+    ]
+
+
+def test_schedule_window_is_never_widened() -> None:
+    rule = _sample_kibana_rule()
+    rule.update({"interval": "10m", "from": "now-5m"})
+    assert _recompiled(rule)["from"] == "now-10m"
+    rule.update({"interval": "5m", "from": "now-2w"})
+    assert _recompiled(rule)["from"] == "now-14d"
+
+
+def test_kibana_only_shapes_still_validate() -> None:
+    rule = _sample_kibana_rule()
+    rule.update(
+        {
+            "type": "new_terms",
+            "new_terms_fields": ["user.name"],
+            "history_window_start": "now-2w",
+            "investigation_fields": None,
+            "risk_score_mapping": [
+                {"field": "f", "operator": "equals", "value": "", "risk_score": 5}
+            ],
+            "required_fields": [{"name": "x", "type": "ip_range", "ecs": False}],
+        }
+    )
+    doc = kibana_to_opentide(rule)
+    load_rule_from_dict(doc)
+    assert doc["configurations"]["elastic"]["new_terms"]["history_window_start"] == "14d"
+    assert "required_fields" not in doc["configurations"]["elastic"]
+
+
+def test_run_skips_rules_it_cannot_write_valid(tmp_path: Path) -> None:
+    from opentide.extraction.elastic_importer import _unwritable_reason
+
+    assert "not a UUID" in _unwritable_reason(
+        kibana_to_opentide(_sample_kibana_rule(rule_id="my-rule"))
+    )
+    saved = {**_sample_kibana_rule(), "type": "saved_query", "saved_id": "abc", "query": None}
+    assert "does not validate" in _unwritable_reason(kibana_to_opentide(saved))
+    assert _unwritable_reason(kibana_to_opentide(_sample_kibana_rule())) is None
+
+    fake_tenant = MagicMock()
+    fake_tenant.name = "staging"
+    fake_tenant.setup.url = "https://kibana.test"
+    fake_tenant.setup.elasticsearch_url = "https://es.test"
+    fake_tenant.setup.api_key = "k"
+    fake_tenant.setup.space = "default"
+    fake_tenant.setup.ssl = True
+
+    with (
+        patch("opentide.core.registry.OpenTide") as mock_ot,
+        patch("opentide.platforms.elastic.client.ElasticClient") as mock_client_cls,
+    ):
+        mock_ot.Configuration.Systems.Elastic.tenants = [fake_tenant]
+        mock_client = mock_client_cls.return_value
+        mock_client.find_rules.return_value = {
+            "data": [
+                _sample_kibana_rule(rule_id="my-rule", name="Bad ID Rule"),
+                saved,
+                _sample_kibana_rule(),
+            ]
+        }
+
+        with pytest.raises(RuntimeError, match="No Elastic tenant is configured for Kibana space"):
+            run(destination=tmp_path, space="soc-team")
+
+        res = run(destination=tmp_path, space="default")
+
+    assert res["extracted_count"] == 1
+    assert len(res["skipped"]) == 2
+    assert [s["name"] for s in res["skipped"]] == ["Bad ID Rule", "Suspicious PowerShell"]
+
+
+def test_threshold_string_field_is_wrapped_not_split() -> None:
+    rule = _sample_kibana_rule()
+    rule.update(
+        {
+            "type": "threshold",
+            "threshold": {"field": "user.name", "value": 5},
+        }
+    )
+    doc = kibana_to_opentide(rule)
+    load_rule_from_dict(doc)
+    assert doc["configurations"]["elastic"]["threshold"]["field"] == ["user.name"]
+    assert _recompiled(rule)["threshold"]["field"] == ["user.name"]
+
+
+def test_endpoint_response_action_overwrite_and_unsupported_commands() -> None:
+    rule = _sample_kibana_rule(
+        response_actions=[
+            {
+                "action_type_id": ".endpoint",
+                "params": {
+                    "command": "kill-process",
+                    "comment": "Default field",
+                    "config": {"field": "process.entity_id", "overwrite": True},
+                },
+            },
+            {
+                "action_type_id": ".endpoint",
+                "params": {
+                    "command": "kill-process",
+                    "comment": "Custom field",
+                    "config": {"field": "process.parent.entity_id", "overwrite": False},
+                },
+            },
+            {
+                "action_type_id": ".endpoint",
+                "params": {"command": "future-command"},
+            },
+        ]
+    )
+    doc = kibana_to_opentide(rule)
+    load_rule_from_dict(doc)
+    respond = doc["configurations"]["elastic"]["actions"]["respond"]
+    assert respond == [
+        {"endpoint": "kill-process", "comment": "Default field"},
+        {
+            "endpoint": "kill-process",
+            "comment": "Custom field",
+            "field": "process.parent.entity_id",
+        },
+    ]
+    assert _recompiled(rule)["response_actions"] == [
+        {
+            "action_type_id": ".endpoint",
+            "params": {"command": "kill-process", "comment": "Default field"},
+        },
+        {
+            "action_type_id": ".endpoint",
+            "params": {
+                "command": "kill-process",
+                "comment": "Custom field",
+                "config": {"field": "process.parent.entity_id", "overwrite": False},
+            },
+        },
+    ]

@@ -375,6 +375,39 @@ def generate_extract_defender(ctx: typer.Context) -> None:
     _run_extract_command(ctx, ExtractImport.defender)
 
 
+@extract_app.command("elastic")
+def generate_extract_elastic(
+    ctx: typer.Context,
+    space: str = typer.Option("default", "--space", help="Kibana space ID"),
+    include_prebuilt: bool = typer.Option(
+        False,
+        "--include-prebuilt/--custom-only",
+        help="Include prebuilt rules converted to custom rules with derived UUIDs",
+    ),
+) -> None:
+    """Import Elastic Security detection rules (needs tenant credentials)."""
+    cli = get_context(ctx)
+    try:
+        from opentide.cli.services.extraction import run_extract
+
+        result = run_extract(
+            cli,
+            import_target=ExtractImport.elastic,
+            space=space,
+            include_prebuilt=include_prebuilt,
+        )
+    except Exception as exc:
+        detail = str(exc).strip()
+        message = (
+            f"{type(exc).__name__}: {detail}"
+            if detail and not isinstance(exc, RuntimeError | FileNotFoundError)
+            else detail or f"{type(exc).__name__} while importing elastic"
+        )
+        emit_error(cli, message)
+        return
+    emit_success(cli, result)
+
+
 validate_app = typer.Typer(help="Object and query validation")
 app.add_typer(validate_app, name="validate")
 

@@ -6,6 +6,7 @@ from opentide.loading.platform_loader import (
     load_carbon_black_config,
     load_crowdstrike_config,
     load_defender_config,
+    load_elastic_config,
     load_sentinel_config,
     load_sentinel_one_config,
     load_splunk_config,
@@ -65,6 +66,23 @@ def test_crowdstrike_config_loader_drops_legacy_external_ids() -> None:
             "query": "index=main",
             "details": {"trigger": "event", "outcome": "detection"},
             "schedule": {"frequency": "1h", "lookback": "2h"},
+            "rule_id::tenant-a": "abc",
+            "rule_id_bundle": {"tenant-b": "def"},
+        }
+    )
+    dumped = config.model_dump()
+    assert not any(key.startswith("rule_id") for key in dumped)
+
+
+def test_elastic_config_loader_drops_legacy_external_ids() -> None:
+    """Elastic addresses rules by ``metadata.uuid``; a stray vendor id must not break loading."""
+    config = load_elastic_config(
+        {
+            "schema": "platform::elastic::1.0",
+            "status": "STAGING",
+            "type": "query",
+            "query": "process.name: *",
+            "index": ["logs-*"],
             "rule_id::tenant-a": "abc",
             "rule_id_bundle": {"tenant-b": "def"},
         }

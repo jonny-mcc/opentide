@@ -384,7 +384,7 @@ def load_carbon_black_config(mdr_config: dict[str, Any]) -> CarbonBlackConfig:
 
 
 def load_elastic_config(mdr_config: dict[str, Any]) -> ElasticConfig:
-    return ElasticConfig.model_validate(mdr_config)
+    return ElasticConfig.model_validate(_without_external_ids(mdr_config))
 
 
 _PLATFORM_LOADERS = {

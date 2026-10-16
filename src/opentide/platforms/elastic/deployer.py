@@ -9,7 +9,9 @@ from typing import Any
 
 import structlog
 
+from opentide.core.registry import OpenTide
 from opentide.deployment import TideDeployment, check_status
+from opentide.deployment.external_ids import without_legacy_external_ids
 from opentide.models.deployment_enums import (
     DeploymentStrategy,
     DetectionPlatforms,
@@ -291,7 +293,17 @@ class ElasticDeploy:
         deployment_plan: DeploymentStrategy | None = None,
     ) -> None:
         """Deploy detection rules using TideDeployment tenant batches."""
-        deployment = TideDeployment(mdr_deployment, DetectionPlatforms.ELASTIC, deployment_plan)
+        loaded_mdr: list[DetectionRule] = []
+        for mdr in mdr_deployment:
+            if isinstance(mdr, str):
+                loaded_mdr.append(OpenTide.Rules[mdr])
+            elif isinstance(mdr, DetectionRule):
+                loaded_mdr.append(mdr)
+        loaded_mdr = without_legacy_external_ids(loaded_mdr, platform="elastic")
+        if not loaded_mdr:
+            logger.info("no_mdrs_to_deploy_for_elastic")
+            return
+        deployment = TideDeployment(loaded_mdr, DetectionPlatforms.ELASTIC, deployment_plan)
         for batch in deployment.rule_deployment:
             tenant: ConfigurationModels.Systems.Elastic.Tenant = batch.tenant
             client = ElasticClient(

@@ -102,8 +102,8 @@ def legacy_key_error(
 def without_legacy_external_ids(rules: list[Any], *, platform: str) -> list[Any]:
     """Drop and report rules that still carry a vendor id, before any client is built.
 
-    HarfangLab and Carbon Black never read the id, but a rule with the key is
-    invalid on every platform and must be migrated, not deployed around.
+    HarfangLab, Carbon Black and Elastic never read the id, but a rule with the
+    key is invalid on every platform and must be migrated, not deployed around.
     """
     kept: list[Any] = []
     for rule in rules:

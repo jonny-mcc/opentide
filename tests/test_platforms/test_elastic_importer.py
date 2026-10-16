@@ -154,6 +154,17 @@ def test_disabled_filter_stays_disabled() -> None:
     assert _recompiled(rule)["filters"][0]["meta"]["disabled"] is True
 
 
+def test_note_is_imported_once_and_round_trips() -> None:
+    rule = _sample_kibana_rule()
+    rule["note"] = "## Triage\n\nCheck the parent process.\n"
+    doc = kibana_to_opentide(rule)
+    assert doc["configurations"]["elastic"]["guide"]["investigation"] == (
+        "## Triage\n\nCheck the parent process."
+    )
+    assert "procedure" not in doc["response"]
+    assert _recompiled(rule)["note"] == "## Triage\n\nCheck the parent process."
+
+
 def test_integration_version_range_is_kept() -> None:
     rule = _sample_kibana_rule()
     rule["related_integrations"] = [{"package": "windows", "version": "^2.0.0"}]

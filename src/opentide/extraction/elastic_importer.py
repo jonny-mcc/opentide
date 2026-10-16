@@ -517,12 +517,8 @@ def kibana_to_opentide(
         "description": description,
         "techniques": techniques,
         "references": {"public": refs_dict} if refs_dict else None,
-        "response": {
-            "alert_severity": alert_severity,
-            "procedure": {
-                "analysis": str(rule.get("note", "")).strip() or None,
-            },
-        },
+        # The note is imported once, as guide.investigation; compile reads it from there.
+        "response": {"alert_severity": alert_severity},
         "configurations": {
             "elastic": _clean_empty(elastic_block),
         },

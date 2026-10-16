@@ -96,7 +96,7 @@ v0.x: legacy imports warn via `DeprecationWarning`. **v1.0 removes shims.**
 | (repository onboarding) | `opentide setup` |
 | (CI pipeline files) | `opentide setup ci github` |
 
-Query validation: **five platforms only** (no CrowdStrike/HarfangLab).
+Query validation: **six platforms only** (no CrowdStrike/HarfangLab).
 
 ### 6. Update CI
 

@@ -82,7 +82,7 @@ result = rule.validate_query("sentinel")   # ValidationResult
 print(result.ok, result.errors)
 ```
 
-`rule.validate_query(platform)` delegates to the platform's registered **live** validator, which needs the vendor SDK and tenant credentials. It works for the five platforms that ship validators — `sentinel`, `defender_for_endpoint`, `splunk`, `sentinel_one`, `carbon_black_cloud` — and reports **unsupported** (not a fake pass) for `crowdstrike` and `harfanglab`. Check capability first:
+`rule.validate_query(platform)` delegates to the platform's registered **live** validator, which needs the vendor SDK and tenant credentials. It works for the six platforms that ship validators — `sentinel`, `defender_for_endpoint`, `splunk`, `sentinel_one`, `carbon_black_cloud`, `elastic` — and reports **unsupported** (not a fake pass) for `crowdstrike` and `harfanglab`. Check capability first:
 
 ```python
 if OpenTide.Platforms["sentinel"].can_validate:

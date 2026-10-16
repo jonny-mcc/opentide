@@ -21,6 +21,7 @@ class DetectionPlatform(str, Enum):
     sentinel_one = "sentinel_one"
     carbon_black = "carbon_black_cloud"
     harfanglab = "harfanglab"
+    elastic = "elastic"
 
 
 #: Re-exported so CLI callers keep a stable import path.
@@ -97,6 +98,7 @@ def platform_label(platform: DetectionPlatform) -> str:
         DetectionPlatform.sentinel_one: "SentinelOne",
         DetectionPlatform.carbon_black: "Carbon Black Cloud",
         DetectionPlatform.harfanglab: "HarfangLab",
+        DetectionPlatform.elastic: "Elastic Security",
     }
     return labels.get(platform, platform.value)
 

@@ -96,7 +96,7 @@ v0.x: legacy imports warn via `DeprecationWarning`. **v1.0 removes shims.**
 | (repository onboarding) | `opentide setup` |
 | (CI pipeline files) | `opentide setup ci github` |
 
-Query validation: **five platforms only** (no CrowdStrike/HarfangLab).
+Query validation: **six platforms only** (no CrowdStrike/HarfangLab).
 
 ### 6. Update CI
 
@@ -154,7 +154,7 @@ Every workspace that has deployed to one of those three platforms:
 3. Commit the edited rules and every new file under `.opentide/states/deployment/` in one commit, before the next deploy.
 4. If CI deploys, make it commit `.opentide/states/deployment/` after a deploy that creates rules, together with any promoted rule files.
 
-Keys on every other platform (Sentinel, Splunk, HarfangLab, Carbon Black Cloud) were never read; the migration removes them without storing them and prints each one as `external_id_unused` with its platform, tenant, value and file. Those warnings do not fail the command. Workspaces that only deploy to Sentinel or Splunk have no shard to write.
+Keys on every other platform (Sentinel, Splunk, HarfangLab, Carbon Black Cloud, Elastic) were never read; the migration removes them without storing them and prints each one as `external_id_unused` with its platform, tenant, value and file. Those warnings do not fail the command. Workspaces that only deploy to Sentinel or Splunk have no shard to write.
 
 `ExternalIdHelper` is removed from `opentide.deployment`. Use `opentide.states.deployment` (`DeploymentState`, `record_external_id`, `forget_external_id`) instead.
 

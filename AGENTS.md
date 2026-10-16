@@ -1,6 +1,6 @@
 # OpenTide — Agent Guide
 
-**OpenTide** (`opentide`) is the DetectionOps engine — a versioned Python package on PyPI for detection-as-code: validate, index, generate schemas, deploy, and document rules across seven security platforms.
+**OpenTide** (`opentide`) is the DetectionOps engine — a versioned Python package on PyPI for detection-as-code: validate, index, generate schemas, deploy, and document rules across eight security platforms.
 
 **Entry point:** this file, then a domain skill from [`.agents/skills/`](.agents/skills/) when the task matches.
 
@@ -92,6 +92,7 @@ scripts/ci-local.sh --full       # + coverage gate (pyproject.toml) — use befo
 |----------|:------:|:--------------:|
 | Sentinel | ✅ | ✅ KQL |
 | Defender | ✅ | ✅ KQL |
+| Elastic | ✅ | ✅ Kuery, Lucene, EQL, ES\|QL |
 | Splunk | ✅ | ✅ SPL |
 | SentinelOne | ✅ | ✅ S1QL |
 | Carbon Black | ✅ | ✅ Lucene |

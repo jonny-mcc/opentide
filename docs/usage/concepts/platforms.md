@@ -1,11 +1,11 @@
 ---
 title: Platforms
-description: Seven deployment platforms, five query validators, and where each platform block schema is specified.
+description: Eight deployment platforms, six query validators, and where each platform block schema is specified.
 ---
 
 # Platforms
 
-OpenTide integrates with **seven detection platforms** through built-in adapters registered at import time (`opentide.platforms` entry points). All ship in the base PyPI package.
+OpenTide integrates with **eight detection platforms** through built-in adapters registered at import time (`opentide.platforms` entry points). All ship in the base PyPI package.
 
 ## Capability matrix
 
@@ -13,6 +13,7 @@ OpenTide integrates with **seven detection platforms** through built-in adapters
 |----------|------------------|:------:|:--------------:|----------------|
 | Microsoft Sentinel | `sentinel` | yes | yes | KQL |
 | Defender for Endpoint | `defender_for_endpoint` | yes | yes | KQL |
+| Elastic Security | `elastic` | yes | yes | Kuery / Lucene / EQL / ES\|QL |
 | Splunk Enterprise Security | `splunk` | yes | yes | SPL |
 | SentinelOne | `sentinel_one` | yes | yes | S1QL |
 | Carbon Black Cloud | `carbon_black_cloud` | yes | yes | Lucene |
@@ -22,6 +23,8 @@ OpenTide integrates with **seven detection platforms** through built-in adapters
 CLI `--platform` uses **registry keys** (`defender_for_endpoint`, `carbon_black_cloud`, `sentinel_one`). These are runtime identifiers — not pip install extras.
 
 CrowdStrike stores a correlation filter. HarfangLab stores a Sigma rule or a YARA rule. Neither language is syntax-checked: `opentide validate query` reports `supported: false`.
+
+Elastic query validation is the live tenant check only. `validate query --platform elastic --live` previews the compiled rule in Kibana and runs the Elasticsearch pre-flight (ES|QL `LIMIT 0`, then `_field_caps` on aggregation fields). The same pre-flight runs before every Elastic deploy. There is no offline syntax check. See [Validate](../../cli/validate.md#elastic-live-validation-and-deploy).
 
 Normative capability flags and the shared block: [Platforms spec](/docs/specifications/specs/platforms/).
 

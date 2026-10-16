@@ -29,7 +29,7 @@ The base dependency pins `mcp>=1.28.1,<2`. `mcp` 2.x replaced
 launcher tells those two failures apart rather than reporting both as missing.
 </Callout>
 
-All seven platform adapters ship in the same wheel — enable them in the repo with `opentide setup platforms`.
+All eight platform adapters ship in the same wheel — enable them in the repo with `opentide setup platforms`.
 
 ## Verify
 

@@ -191,8 +191,9 @@ def test_skip_unconfigured_does_not_excuse_a_refused_rule(
     [
         ("opentide.platforms.sentinel.deployer", "SentinelDeploy"),
         ("opentide.platforms.splunk.deployer", "SplunkDeploy"),
+        ("opentide.platforms.elastic.deployer", "ElasticDeploy"),
     ],
-    ids=["sentinel", "splunk"],
+    ids=["sentinel", "splunk", "elastic"],
 )
 def test_direct_deployer_calls_refuse_a_legacy_key(
     tide_corpus_repo: Path, monkeypatch: pytest.MonkeyPatch, module: str, engine: str
@@ -208,7 +209,7 @@ def test_direct_deployer_calls_refuse_a_legacy_key(
     clear_runtime_caches()
     deployer_module = importlib.import_module(module)
     built = MagicMock()
-    # Sentinel imports TideDeployment inside deploy(); Splunk binds it at import.
+    # Sentinel imports TideDeployment inside deploy(); Splunk and Elastic bind it at import.
     monkeypatch.setattr("opentide.deployment.TideDeployment", built)
     if hasattr(deployer_module, "TideDeployment"):
         monkeypatch.setattr(deployer_module, "TideDeployment", built)

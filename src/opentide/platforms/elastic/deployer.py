@@ -7,6 +7,7 @@ import os
 from collections.abc import Sequence
 from typing import Any
 
+import requests
 import structlog
 
 from opentide.core.registry import OpenTide
@@ -85,11 +86,26 @@ def _write_failed(resp: Any, event: str, rule_id: str, tenant: str) -> bool:
     the batch continues.
     """
     if resp.status_code in (401, 403):
-        raise ElasticTenantError(f"Tenant {tenant} auth error: HTTP {resp.status_code}")
+        raise ElasticTenantError(
+            f"Tenant {tenant} auth error: HTTP {resp.status_code}: {_kibana_error(resp)}"
+        )
     if resp.status_code >= 400:
-        _deployment_error(event, rule_id=rule_id, status_code=resp.status_code, error=resp.text)
+        _deployment_error(
+            event, rule_id=rule_id, status_code=resp.status_code, error=_kibana_error(resp)
+        )
         return True
     return False
+
+
+def _kibana_error(resp: Any) -> str:
+    """Kibana's ``message`` from an error body, else the raw body text."""
+    try:
+        body = resp.json()
+    except ValueError:
+        return resp.text
+    if isinstance(body, dict) and body.get("message"):
+        return str(body["message"])
+    return resp.text
 
 
 PRESERVED_FIELDS = (
@@ -207,31 +223,22 @@ class ElasticDeploy:
                 continue
 
             if get_resp.status_code in (401, 403):
-                raise RuntimeError(
-                    f"Authentication/authorization error for tenant {tenant_config.name}: HTTP {get_resp.status_code}"
+                raise ElasticTenantError(
+                    f"Tenant {tenant_config.name} auth error: HTTP {get_resp.status_code}"
                 )
 
             if get_resp.status_code == 404:
-                # Rule not found: POST
+                # Rule not found: POST. 401/403 fails the tenant; any other
+                # error fails this rule only (RFC 0007 §5).
                 logger.info("creating_elastic_rule", rule_id=rule_id, name=rule.name)
                 try:
                     create_resp = client.create_rule(compiled)
-                    if create_resp.status_code in (400, 409):
-                        _deployment_error(
-                            "create_elastic_rule_failed",
-                            rule_id=rule_id,
-                            status_code=create_resp.status_code,
-                            error=create_resp.text,
-                        )
-                        continue
-                    if create_resp.status_code in (401, 403):
-                        raise RuntimeError(f"Tenant auth error: HTTP {create_resp.status_code}")
-                    create_resp.raise_for_status()
-                except Exception as exc:
-                    status_code = getattr(getattr(exc, "response", None), "status_code", None)
-                    if status_code in (401, 403):
-                        raise
-                    _deployment_error("create_elastic_rule_error", rule_id=rule_id, error=str(exc))
+                except requests.RequestException as exc:
+                    _deployment_error("create_elastic_rule_failed", rule_id=rule_id, error=str(exc))
+                    continue
+                _write_failed(
+                    create_resp, "create_elastic_rule_failed", rule_id, tenant_config.name
+                )
                 continue
 
             if get_resp.status_code != 200:

@@ -14,6 +14,7 @@ from opentide.models.rule import DetectionRule
 from opentide.models.system_config import ConfigurationModels
 from opentide.platforms.elastic.client import ElasticClient
 from opentide.platforms.elastic.deployer import ElasticDeploy
+from opentide.platforms.elastic.es_checks import ElasticTenantError
 
 
 def _mock_response(status_code: int = 200, json_data: dict | list | None = None, text: str = ""):
@@ -412,3 +413,88 @@ def test_client_preview_uses_the_kibana_preview_route() -> None:
     assert mock_post.call_args[0][0] == (
         "https://kibana.test:5601/s/staging/api/detection_engine/rules/preview"
     )
+
+
+@pytest.mark.parametrize("post_status", [401, 403])
+@patch("opentide.platforms.elastic.deployer.run_elasticsearch_checks")
+def test_deploy_create_auth_error_fails_the_tenant(
+    mock_checks, post_status: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """RFC 0007 §5: a 401 or 403 on the create POST stops the tenant, not just the rule."""
+    _clear_deploy_flags(monkeypatch)
+    tenant = _make_tenant()
+    batch = MagicMock(rules=[_make_rule("r1"), _make_rule("r2")])
+
+    client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "post") as mock_post,
+    ):
+        mock_get.return_value = _mock_response(404, {"message": "Not found"})
+        mock_post.return_value = _mock_response(post_status, {"message": "missing privileges"})
+        with pytest.raises(ElasticTenantError, match=f"HTTP {post_status}"):
+            ElasticDeploy().deploy_mdr(batch, client, tenant)
+        assert mock_post.call_count == 1
+
+
+@patch("opentide.platforms.elastic.deployer.run_elasticsearch_checks")
+def test_deploy_create_error_reports_kibana_message_and_continues(
+    mock_checks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_deploy_flags(monkeypatch)
+    tenant = _make_tenant()
+    batch = MagicMock(rules=[_make_rule("r1"), _make_rule("r2")])
+
+    # Recorded at the deployer: loggers cached on first use bypass capture_logs.
+    failed: list[tuple[str, dict]] = []
+    monkeypatch.setattr(
+        "opentide.platforms.elastic.deployer._deployment_error",
+        lambda event, **fields: failed.append((event, fields)),
+    )
+
+    client = ElasticClient(url=tenant.setup.url, api_key=tenant.setup.api_key)
+    with (
+        patch.object(client.session, "get") as mock_get,
+        patch.object(client.session, "post") as mock_post,
+    ):
+        mock_get.return_value = _mock_response(404, {"message": "Not found"})
+        mock_post.side_effect = [
+            _mock_response(422, {"statusCode": 422, "message": "invalid query"}),
+            _mock_response(200, {"rule_id": "r2"}),
+        ]
+        ElasticDeploy().deploy_mdr(batch, client, tenant)
+
+        assert mock_post.call_count == 2
+    assert failed == [
+        (
+            "create_elastic_rule_failed",
+            {"rule_id": "r1", "status_code": 422, "error": "invalid query"},
+        )
+    ]
+
+
+@patch("opentide.platforms.elastic.deployer.run_elasticsearch_checks")
+def test_deploy_create_401_through_deploy_fails_the_run(
+    mock_checks, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    _clear_deploy_flags(monkeypatch)
+    tenant = _make_tenant()
+    batch = MagicMock(tenant=tenant, rules=[_make_rule("r1"), _make_rule("r2")])
+    monkeypatch.setattr(
+        "opentide.platforms.elastic.deployer.without_legacy_external_ids",
+        lambda rules, platform: rules,
+    )
+    monkeypatch.setattr(
+        "opentide.platforms.elastic.deployer.TideDeployment",
+        MagicMock(return_value=MagicMock(rule_deployment=[batch])),
+    )
+    with (
+        patch("requests.Session.get") as mock_get,
+        patch("requests.Session.post") as mock_post,
+    ):
+        mock_get.return_value = _mock_response(404, {"message": "Not found"})
+        mock_post.return_value = _mock_response(401, {"message": "unauthorized"})
+        ElasticDeploy().deploy(list(batch.rules), DeploymentStrategy.STAGING)
+
+        assert mock_post.call_count == 1
+    assert os.environ.get("DEPLOYMENT_ERROR_RAISED") == "1"

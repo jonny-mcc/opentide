@@ -76,9 +76,10 @@ def resolve_rule_sources(
 ) -> tuple[str | None, bool]:
     """Resolve index patterns for a rule block, checking ``data_view_id`` in Kibana when set.
 
-    Returns ``(sources, has_explicit_source)``. Missing data views (HTTP 404) are
-    recorded as a warning so rules can be authored before data onboarding; HTTP
-    401/403 raises :class:`ElasticTenantError`.
+    Returns ``(sources, has_explicit_source)``. A data view that is missing or
+    unreadable (any non-200 other than 401/403) raises
+    :class:`ElasticRuleCheckError`, which fails the rule; HTTP 401/403 raises
+    :class:`ElasticTenantError`.
     """
     rule_type = block.get("type", "query")
     if rule_type == "machine_learning":

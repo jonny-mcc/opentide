@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import copy
-import json
 from typing import Any
 
 from opentide.deployment.utils import check_status
@@ -380,12 +379,3 @@ def compile_rule(
 
     # Ensure server-owned fields never leak
     return {k: v for k, v in body.items() if k not in SERVER_OWNED_FIELDS}
-
-
-def compile_rule_ndjson(
-    rule: DetectionRule | dict[str, Any],
-    tenant_config: ConfigurationModels.Systems.Elastic.Tenant | dict[str, Any] | None = None,
-) -> str:
-    """Compile a DetectionRule into a single-line NDJSON JSON string."""
-    data = compile_rule(rule, tenant_config=tenant_config)
-    return json.dumps(data, sort_keys=True)

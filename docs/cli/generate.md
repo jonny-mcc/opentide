@@ -31,7 +31,7 @@ When run without a subcommand, phases execute in this order:
 | 5 | schemas | `generate schemas` | `.opentide/schemas/*.schema.json`, IDE router `opentide.schema.json` |
 | 6 | snippets | `generate snippets` | VS Code snippets from templates |
 
-`extract` is **not** part of the default run — it calls live platform APIs and writes `Imported/` in the working directory. Use `opentide generate extract sentinel` or `opentide generate extract defender` explicitly when importing rules.
+`extract` is **not** part of the default run — it calls live platform APIs and writes `Imported/` in the working directory. Use `opentide generate extract sentinel`, `opentide generate extract defender` or `opentide generate extract elastic` explicitly when importing rules.
 
 A freshly scaffolded repository (no objects yet) is a valid generate target. Docs and exports write empty artifacts. Snippet conversion requires the YAML templates from the templates phase and fails if a core or enabled-platform template is missing. Snippet prefixes are `tide-threat`, `tide-objective`, `tide-rule`, and `tide-<platform>` for enabled platforms, with `scope: yaml` and tabstops on empty values.
 
@@ -172,9 +172,28 @@ Import detection rules from external platforms (credential-heavy, experimental f
 ```bash
 opentide generate extract sentinel
 opentide generate extract defender
+opentide generate extract elastic
+opentide generate extract elastic --space staging --include-prebuilt
 ```
 
 Configure tenant credentials under `.opentide/configurations/platforms/` before running.
+
+### generate extract elastic
+
+Exports the detection rules of one Kibana space and writes each one to `Imported/` as a `rule::1.0` file with a `platform::elastic::1.0` block.
+
+| Option | Default | Meaning |
+|--------|---------|---------|
+| `--space` | `default` | Kibana space to export. The command uses the tenant in `elastic.toml` whose `setup.space` matches, and fails when none does; it never falls back to another tenant. |
+| `--include-prebuilt` / `--custom-only` | `--custom-only` | `--include-prebuilt` also converts Elastic prebuilt rules into custom rules. Their names get a ` (Custom)` suffix and their `metadata.uuid` is derived from the prebuilt `rule_id`, so deploying them never touches the prebuilt rule. |
+
+- A rule's Kibana `rule_id` becomes `metadata.uuid`. A custom rule whose `rule_id` is not a UUID is skipped, because deploying it under a new id would create a duplicate.
+- An enabled rule gets `status: PRODUCTION`, a disabled one `status: DISABLED`, so a deploy keeps it disabled.
+- The rule's `note` becomes `guide.investigation`.
+- Every file is loaded as an OpenTide rule before it is written. A rule that would not load (for example a `saved_query` rule) is skipped with `elastic_import_rule_skipped` and listed under `skipped` in the JSON result, with the reason.
+- Two rules with the same name do not overwrite each other: the second file name gets the first eight characters of its UUID.
+- A look-back window that RFC 0007 cannot express is logged as `elastic_import_window_widened` or `elastic_import_schedule_defaulted`.
+- No deployment state is written: Elastic addresses rules by `metadata.uuid`.
 
 ## When to run
 

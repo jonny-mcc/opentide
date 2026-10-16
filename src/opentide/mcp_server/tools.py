@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from typing import Any
 
 from opentide.core.registry import OpenTide
@@ -177,6 +178,12 @@ def tool_deploy_rule(uuid: str, platform: str, dry_run: bool = True) -> dict[str
         missing = _missing_tenants(uuid, platform)
         if missing is not None:
             return missing
+    # Deployers report per-rule refusals (external_id_in_rule,
+    # deployment_state_write_failed, ...) through these flags rather than by
+    # raising. Each call grades itself: a long-lived server must not inherit a
+    # previous call's result.
+    for flag in ("DEPLOYMENT_ERROR_RAISED", "DEPLOYMENT_WARNING_RAISED"):
+        os.environ.pop(flag, None)
     try:
         result = rule.deploy(platform, dry_run=dry_run)
     except ValueError as exc:
@@ -189,6 +196,23 @@ def tool_deploy_rule(uuid: str, platform: str, dry_run: bool = True) -> dict[str
             "platform": platform,
             "message": str(exc),
         }
+    from opentide.cli.exit_codes import deployment_outcome
+
+    outcome = deployment_outcome()
+    if outcome.failed:
+        return {
+            "action": "error",
+            "tenant": None,
+            "rule_id": uuid,
+            "status": "failed",
+            "dry_run": result.dry_run,
+            "platform": platform,
+            "message": (
+                "Deployment failed: the deployer reported a rule error "
+                "(see the log for its code, for example external_id_in_rule)"
+            ),
+            "error": "deployment_failed",
+        }
     return {
         "action": "dry-run" if dry_run else "deploy",
         "tenant": None,
@@ -200,19 +224,25 @@ def tool_deploy_rule(uuid: str, platform: str, dry_run: bool = True) -> dict[str
     }
 
 
-def _platform_deployment_state(cfg: Any) -> dict[str, Any]:
-    """A configuration block is not a completed deploy until an id or tenant is recorded."""
-    if isinstance(cfg, dict):
-        rule_id = cfg.get("external_id")
-        tenants = cfg.get("tenants") or []
-        if not isinstance(tenants, list):
-            tenants = []
-        deployed = rule_id is not None or bool(tenants)
-    else:
-        rule_id = None
+def _platform_deployment_state(
+    cfg: Any, external_ids: dict[str, str] | None = None
+) -> dict[str, Any]:
+    """A platform counts as deployed once a vendor id is recorded or tenants are named.
+
+    Vendor ids come from ``.opentide/states/deployment/<uuid>.json`` (RFC 0010),
+    keyed by tenant. ``rule_id`` is that id when exactly one tenant is bound.
+    """
+    ids = dict(external_ids or {})
+    tenants = (cfg.get("tenants") or []) if isinstance(cfg, dict) else []
+    if not isinstance(tenants, list):
         tenants = []
-        deployed = False
-    return {"deployed": deployed, "rule_id": rule_id, "tenants": tenants}
+    rule_id = next(iter(ids.values())) if len(ids) == 1 else None
+    return {
+        "deployed": bool(ids) or bool(tenants),
+        "rule_id": rule_id,
+        "external_ids": ids,
+        "tenants": tenants,
+    }
 
 
 def tool_deployment_status(uuid: str) -> dict[str, Any]:
@@ -222,9 +252,26 @@ def tool_deployment_status(uuid: str) -> dict[str, Any]:
         return {"platforms": {}, "uuid": uuid, "found": False}
     if not isinstance(body, dict):
         body = body.model_dump(by_alias=True) if hasattr(body, "model_dump") else {}
+    from opentide.states.deployment import DeploymentState, DeploymentStateError
+
+    recorded: dict[str, dict[str, str]] = {}
+    state_error: dict[str, str] | None = None
+    try:
+        recorded = DeploymentState.load(uuid).platforms
+    except DeploymentStateError as error:
+        state_error = {"code": error.code, "message": error.message}
     platforms_state: dict[str, Any] = {}
     configs = body.get("configurations", {}) or body.get("platforms", {})
     if isinstance(configs, dict):
         for name, cfg in configs.items():
-            platforms_state[name] = _platform_deployment_state(cfg)
+            platforms_state[name] = _platform_deployment_state(cfg, recorded.get(name))
+    for name, ids in recorded.items():
+        platforms_state.setdefault(name, _platform_deployment_state(None, ids))
+    if state_error is not None:
+        return {
+            "platforms": platforms_state,
+            "uuid": uuid,
+            "found": True,
+            "state_error": state_error,
+        }
     return {"platforms": platforms_state, "uuid": uuid, "found": True}

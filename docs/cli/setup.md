@@ -83,7 +83,7 @@ Run `setup platforms` before `setup ci` so `validate query` jobs are included. I
 
 Generated pipelines set `OPENTIDE_REPO_ROOT` at workflow (GitHub), `variables` (GitLab), or pipeline (Azure) scope so `opentide` commands resolve the detection repository in CI. Re-run `setup ci` to refresh existing pipeline files.
 
-The validate job runs `opentide validate --strict` and `opentide lint --strict`. Each enabled platform that supports query validation also runs `opentide validate query --live`, and skips that step when any required credential for the platform is unset. GitHub runs those checks in the validate job. GitLab and Azure run one job per platform in that stage, and generate does not start until they succeed. CrowdStrike and HarfangLab have no query job. Staging and production jobs run a dry-run and then `opentide deploy --plan … --skip-unconfigured`. That flag exits 0 when every platform in the plan still has the commented-out `[[tenants]]` block `setup` writes. The file header lists the credential variables from the bundled platform files. GitHub deploy jobs map each of those names to `secrets.<NAME>`.
+The validate job runs `opentide validate --strict` and `opentide lint --strict`. Each enabled platform that supports query validation also runs `opentide validate query --live`, and skips that step when any required credential for the platform is unset. GitHub runs those checks in the validate job. GitLab and Azure run one job per platform in that stage, and generate does not start until they succeed. CrowdStrike and HarfangLab have no query job. Staging and production jobs run a dry-run and then `opentide deploy --plan … --skip-unconfigured`. That flag exits 0 when every platform in the plan still has the commented-out `[[tenants]]` block `setup` writes. The production job adds `--keep-deprecated`, so `DISABLED` and `REMOVED` rules are disabled or deleted, and then commits what the deploy wrote back (promoted rule statuses and `.opentide/states/deployment/`) to the default branch with a `[skip ci]` message, also after a deploy that failed part way; see [CI/CD](../usage/workflows/ci-cd.md#production-write-back). The file header lists the credential variables from the bundled platform files. GitHub deploy jobs map each of those names to `secrets.<NAME>`.
 
 The Azure pipeline sets `pool.vmImage` to `ubuntu-latest` and triggers on every branch so a topic-branch push still validates. `pr:` is kept for Azure Pipelines hosted on GitHub or Bitbucket. Azure Repos Git ignores `pr:`; add a build validation policy on the default branch so a pull request sets `Build.Reason` to `PullRequest`. Staging deploy stays gated on that reason.
 
@@ -230,7 +230,9 @@ The full wizard checks skill availability before writing repository files. If th
 
 Interim yaml.schemas and snippet generation. By default the command generates templates and JSON schemas into `.opentide/`, then writes settings and snippets. A missing target path is created first so generate-first setup does not `chdir` into a nonexistent directory. Deprecation is logged once per invocation.
 
-`yaml.schemas` maps each object folder to its concrete schema (`threat.1.0.schema.json` → `objects/threats/**/*.yaml`, and the same for objectives and rules). Nested files under those folders stay associated; it does not map the `opentide.schema.json` router against `objects/**/*.yaml` — the Red Hat YAML extension reports "Matches multiple schemas" for that glob.
+`yaml.schemas` maps `objects/**/*.yaml` to the `.opentide/schemas/opentide.schema.json` router. The glob is the common parent of the configured object folders; when they share none, each folder gets its own recursive glob. The router validates each object against the revision schema named in its `metadata.schema`, so `rule::1.0` and `rule::1.1` rules can sit in the same folder. See [Schema revision](../usage/concepts/schema-revision.md).
+
+When merging into an existing `settings.json`, the command removes the per-folder revision mappings earlier releases wrote (for example `.opentide/schemas/rule.1.0.schema.json` → `objects/rules/**/*.yaml`). Other settings and other `yaml.schemas` entries are kept.
 
 ```bash
 opentide setup vscode                 # generate templates + schemas, then settings + snippets
@@ -247,7 +249,7 @@ If snippets were requested and templates are still missing after generate, the c
 |------|---------|
 | `--settings` | Write `.vscode/settings.json` yaml.schemas and `.vscode/extensions.json` (generates schemas first) |
 | `--snippets` | Write model template snippets (generates templates first) |
-| `--no-merge` | Replace settings instead of merging |
+| `--no-merge` | Replace `settings.json` and `extensions.json` instead of merging |
 | `--no-generate` | Do not run `opentide generate` phases first |
 | `--mcp` | Write `.vscode/mcp.json` by calling `write_mcp_config` (opt-in; parent `--vscode-setup` does not imply this) |
 

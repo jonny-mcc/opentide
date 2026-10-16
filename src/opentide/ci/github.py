@@ -17,6 +17,11 @@ from opentide.ci.stages import (
     validate_commands,
 )
 from opentide.ci.text import indent, join_blocks
+from opentide.ci.writeback import (
+    overlay_default_branch_state,
+    production_writeback,
+    rules_folder,
+)
 
 _SHARE_STEPS_NOTE = (
     "# API key environment variables named in sharing.toml come from the CI secret store."
@@ -50,17 +55,75 @@ def _github_job(
     needs: str | None = None,
     if_cond: str | None = None,
     env: str | None = None,
+    permissions: str | None = None,
+    concurrency: str | None = None,
 ) -> str:
     lines = [f"{job_id}:", f"  name: {name}", "  runs-on: ubuntu-latest"]
     if needs:
         lines.append(f"  needs: {needs}")
     if if_cond:
         lines.append(f"  if: {if_cond}")
+    if concurrency:
+        lines.append("  concurrency:")
+        lines.append(indent(concurrency, 4))
+    if permissions:
+        lines.append("  permissions:")
+        lines.append(indent(permissions, 4))
     if env:
         lines.append(indent(env, 2))
     lines.append("  steps:")
     lines.append(indent(steps, 4))
     return "\n".join(lines)
+
+
+#: The write-back runs whenever the deploy step started: also when it failed
+#: part way, was cancelled, or hit the job timeout, so the ids of the rules it
+#: did create are committed. ``always()`` is what lets a step run after a
+#: cancellation; ``!cancelled()`` did not. A dry-run failure skips the deploy
+#: step, and then there is nothing to record.
+WRITEBACK_IF = "${{ always() && steps.deploy.outcome != 'skipped' }}"
+
+#: The GitHub production job deliberately has no ``concurrency`` group. GitHub
+#: keeps one run pending per group and cancels an older *pending* run, and the
+#: production plan deploys only its own commit's diff, so a burst of merges
+#: would silently never deploy the middle one. Overlapping runs are tolerated
+#: instead: the tip-state overlay and the per-tenant replay turn a double
+#: create into a reported ``deployment_state_conflict`` (RFC 0010).
+
+_GIT_IDENTITY = (
+    'git config user.name "github-actions[bot]"',
+    'git config user.email "github-actions[bot]@users.noreply.github.com"',
+)
+
+
+def _production_steps(options: CiRenderOptions) -> str:
+    """State overlay, dry-run, then the deploy as a step with an id the write-back can test."""
+    dry_run, deploy = production_deploy_steps(options)
+    overlay = "\n".join(
+        [
+            *_GIT_IDENTITY,
+            overlay_default_branch_state(fetch=f"git fetch origin {options.default_branch}"),
+        ]
+    )
+    return (
+        "- name: Use the default branch's deployment state\n  run: |\n"
+        + indent(overlay, 4)
+        + f"\n- run: {dry_run}\n- name: Deploy\n  id: deploy\n  run: {deploy}"
+    )
+
+
+def _writeback_step(options: CiRenderOptions) -> str:
+    """Commit promoted rules and deployment state to the default branch (#548)."""
+    branch = options.default_branch
+    script = production_writeback(
+        rules=rules_folder(options.repo),
+        push=f'git push origin "HEAD:{branch}"',
+        fetch=f"git fetch origin {branch}",
+    )
+    body = "\n".join([*_GIT_IDENTITY, script])
+    return f"- name: Commit deployment write-backs\n  if: {WRITEBACK_IF}\n  run: |\n" + indent(
+        body, 4
+    )
 
 
 def _explorer_jobs(branch: str, python_version: str) -> list[str]:
@@ -232,9 +295,12 @@ def render_github(options: CiRenderOptions) -> str:
             needs="generate",
             if_cond=prod_if,
             env=deploy_env,
+            # The write-back step pushes to the default branch.
+            permissions="contents: write",
             steps=join_blocks(
                 _setup_steps(options, full_history=True),
-                _run_steps(production_deploy_steps(options)),
+                _production_steps(options),
+                _writeback_step(options),
             ),
         )
     )
@@ -288,4 +354,4 @@ def render_github(options: CiRenderOptions) -> str:
         f"{permissions}{concurrency}jobs:\n"
     )
     job_yaml = "\n".join(indent(job, 2) for job in jobs)
-    return header_comment(options) + preamble + job_yaml
+    return header_comment(options) + preamble + job_yaml.rstrip("\n") + "\n"

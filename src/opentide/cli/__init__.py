@@ -383,7 +383,9 @@ app.add_typer(validate_app, name="validate")
 def validate_group(
     ctx: typer.Context,
     check: ValidateCheck | None = typer.Option(None, "--check"),
-    file: str | None = typer.Option(None, "--file"),
+    file: list[str] | None = typer.Option(
+        None, "--file", help="Validate only this file (repeatable)"
+    ),
     uuid: list[str] | None = typer.Option(None, "--uuid"),
     object_type: list[str] | None = typer.Option(None, "--type"),
     strict: bool = typer.Option(False, "--strict"),
@@ -405,7 +407,7 @@ def validate_group(
         cli,
         check=check,
         strict=strict,
-        file=file,
+        files=file,
         uuids=uuid,
         object_types=object_type,
     )
@@ -461,12 +463,27 @@ def deploy_cmd(
     plan: str | None = typer.Option(None, "--plan", envvar="DEPLOYMENT_PLAN"),
     wide: bool = typer.Option(False, "--wide"),
     dry_run: bool = typer.Option(False, "--dry-run"),
-    keep_deprecated: bool = typer.Option(False, "--keep-deprecated"),
+    keep_deprecated: bool | None = typer.Option(
+        None,
+        "--keep-deprecated/--drop-deprecated",
+        help=(
+            "Include rules whose status disables or deletes them, so the deploy does. "
+            "Default: on for --plan PRODUCTION, off for other plans"
+        ),
+    ),
     skip_promotion: bool = typer.Option(False, "--skip-promotion"),
     skip_unconfigured: bool = typer.Option(
         False,
         "--skip-unconfigured",
         help="Exit 0 when every platform in the plan has no \\[\\[tenants]] block",
+    ),
+    persist_state_externally: bool = typer.Option(
+        False,
+        "--persist-state-externally",
+        help=(
+            "Allow Defender, SentinelOne and CrowdStrike creates in a CI run other than "
+            "--plan PRODUCTION; this pipeline must commit .opentide/states/deployment/ itself"
+        ),
     ),
 ) -> None:
     """Deploy detection rules to configured platforms."""
@@ -482,8 +499,46 @@ def deploy_cmd(
         keep_deprecated=keep_deprecated,
         wide=wide,
         skip_unconfigured=skip_unconfigured,
+        persist_state_externally=persist_state_externally,
     )
     emit_result(cli, CommandResult.from_payload(result, default_message="Deployment completed"))
+
+
+@deploy_app.command("migrate-state")
+def deploy_migrate_state_cmd(ctx: typer.Context) -> None:
+    """Move vendor rule ids off rules into .opentide/states/deployment/ (no vendor calls).
+
+    Refuses with deployment_state_ignored, and edits nothing, while .gitignore
+    hides .opentide/states/deployment/. Exits 1 when any rule cannot be migrated;
+    ids dropped from other platforms (external_id_unused) are warnings only.
+    """
+    from opentide.cli.services.migrate_state import run_migrate_state
+    from opentide.core.index_manager import IndexManager
+    from opentide.registry.discovery import discover_workspace
+
+    cli = get_context(ctx)
+    cli.apply_environment()
+    workspace = discover_workspace()
+    rules_dir = (
+        IndexManager.return_paths(tier="tide").get("rule") or workspace / "objects" / "rules"
+    )
+    result = run_migrate_state(workspace, rules_dir)
+    emit_result(cli, CommandResult.from_payload(result, default_message="Migration completed"))
+
+
+@deploy_app.command("replay-state", hidden=True)
+def deploy_replay_state_cmd(
+    state_commit: str = typer.Argument(..., help="Commit whose deployment-state changes to replay"),
+) -> None:
+    """Replay one commit's deployment-state changes onto the checkout (CI write-back).
+
+    Used by the generated production write-back when its rule files conflict
+    with a concurrent merge. A subcommand rather than ``python -m`` so it runs
+    in the interpreter that has opentide, whatever ``python`` is on PATH.
+    """
+    from opentide.ci.state_replay import main as replay_main
+
+    raise typer.Exit(replay_main([state_commit]))
 
 
 @deploy_app.command("metadata", hidden=True)

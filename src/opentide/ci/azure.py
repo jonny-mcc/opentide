@@ -15,6 +15,11 @@ from opentide.ci.stages import (
     staging_deploy_steps,
 )
 from opentide.ci.text import indent
+from opentide.ci.writeback import (
+    overlay_default_branch_state,
+    production_writeback,
+    rules_folder,
+)
 from opentide.cli.enums import QUERY_VALIDATION_PLATFORMS
 
 
@@ -65,6 +70,55 @@ def _job_steps(
         + _python_setup(options)
         + "\n"
         + _bash_script(commands)
+    )
+
+
+#: Set by the deploy step just before the real deploy starts.
+DEPLOY_STARTED = "OPENTIDE_DEPLOY_STARTED"
+
+#: Run after a failed, cancelled or timed-out deploy too, so the ids of the
+#: rules it did create are committed, but not when the deploy never started.
+#: ``succeededOrFailed()`` is false after a cancellation; ``always()`` is not.
+WRITEBACK_CONDITION = f"and(always(), eq(variables['{DEPLOY_STARTED}'], 'true'))"
+
+_GIT_IDENTITY = (
+    'git config user.email "azure-pipelines@opentide.local"',
+    'git config user.name "azure-pipelines"',
+)
+
+
+def _production_commands(options: CiRenderOptions) -> list[str]:
+    dry_run, deploy = production_deploy_steps(options)
+    return [
+        *_GIT_IDENTITY,
+        overlay_default_branch_state(fetch=f"git fetch origin {options.default_branch}"),
+        dry_run,
+        f'echo "##vso[task.setvariable variable={DEPLOY_STARTED}]true"',
+        deploy,
+    ]
+
+
+def _writeback_step(options: CiRenderOptions) -> str:
+    """Commit promoted rules and deployment state to the default branch (#548).
+
+    A step of its own. It runs when the deploy step failed after starting
+    the real deploy, and the failed deploy step still fails the job.
+    """
+    branch = options.default_branch
+    script = _bash_script(
+        [
+            *_GIT_IDENTITY,
+            production_writeback(
+                rules=rules_folder(options.repo),
+                push=f"git push origin HEAD:{branch}",
+                fetch=f"git fetch origin {branch}",
+            ),
+        ]
+    )
+    return (
+        script
+        + "\n  displayName: Commit deployment write-backs"
+        + f"\n  condition: {WRITEBACK_CONDITION}"
     )
 
 
@@ -150,7 +204,10 @@ def render_azure(options: CiRenderOptions) -> str:
             "deploy_production",
             display_name="Deploy Production",
             condition=f"eq(variables['Build.SourceBranch'], 'refs/heads/{branch}')",
-            steps=_job_steps(options, production_deploy_steps(options), full_history=True),
+            # Persisted credentials let the write-back step push.
+            steps=_job_steps(options, _production_commands(options), persist_credentials=True)
+            + "\n"
+            + _writeback_step(options),
         )
     )
 
@@ -223,6 +280,12 @@ def render_azure(options: CiRenderOptions) -> str:
         "\n"
         "variables:\n"
         "  OPENTIDE_REPO_ROOT: $(Build.SourcesDirectory)\n"
+        "\n"
+        "# Azure cannot serialise a job from YAML alone. Add an Exclusive lock\n"
+        "# check to a resource the Deploy stage uses (for example an environment\n"
+        "# or the agent pool); this line then queues runs in order instead of\n"
+        "# cancelling all but the latest.\n"
+        "lockBehavior: sequential\n"
         "\n"
         "stages:\n"
         "  - stage: Validate\n"

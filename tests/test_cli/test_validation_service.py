@@ -25,6 +25,15 @@ def tenantless() -> Iterator[MagicMock]:
         yield mock
 
 
+@pytest.fixture(autouse=True)
+def reached() -> Iterator[MagicMock]:
+    """Every planned rule reaches one tenant unless a test says otherwise."""
+    with patch.object(
+        validation_service, "queries_per_tenant", return_value={"tenant-a": 1}
+    ) as mock:
+        yield mock
+
+
 def test_run_validate_cve_delegates_to_session() -> None:
     ctx = CliContext(json_output=True)
     report = ValidationReport(ok=True)
@@ -509,3 +518,23 @@ def test_validate_query_empty_exception_does_not_advise_full_plan() -> None:
     assert result["status"] == "failed"
     assert "FULL" not in str(result["message"])
     assert "KeyError" in str(result["message"])
+
+
+def test_validate_file_is_repeatable() -> None:
+    """The production write-back validates exactly the rule files a deploy modified (#548)."""
+    from typer.testing import CliRunner
+
+    from opentide.cli import app
+
+    report = ValidationReport(ok=True, stats={"objects_checked": 2})
+    with (
+        patch.object(validation_service, "run_validation", return_value=report) as mock_run,
+        patch("opentide.cli.exit_codes.validation_outcome", return_value=CLEAN_OUTCOME),
+    ):
+        result = CliRunner().invoke(
+            app,
+            ["--json", "validate", "--strict", "--file", "rules/a.yaml", "--file", "rules/b.yaml"],
+        )
+    assert result.exit_code == 0, result.stdout + result.stderr
+    scope = mock_run.call_args.kwargs["scope"]
+    assert scope.targets == frozenset({"rules/a.yaml", "rules/b.yaml"})

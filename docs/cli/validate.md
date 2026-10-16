@@ -23,7 +23,7 @@ opentide validate --check schema
 | Flag | Purpose |
 |------|---------|
 | `--check` | Run a single check: `id-uniqueness`, `uuid-format`, `schema`, `cve`, `sharing-config` |
-| `--file` | Validate one YAML file — repo-relative path, absolute path, or bare file name (see [Selecting a file](#selecting-a-file)) |
+| `--file` | Validate one YAML file — repo-relative path, absolute path, or bare file name (see [Selecting a file](#selecting-a-file)). Repeatable: each `--file` adds a file to the scope |
 | `--uuid` | Validate specific UUIDs (repeatable) |
 | `--type` | Filter by object type (repeatable) |
 | `--strict` | Treat warnings as failures (exit `1`) |
@@ -104,11 +104,17 @@ Object folders may contain subfolders, and files in different folders may share 
 
 A path never falls back to its file name: `objects/rules/rule.yaml` does not select `objects/rules/team-a/rule.yaml`, and a path that names no object file fails with `scope_no_match`. Give a path when a file name is not unique.
 
+Every `--file` target must select at least one object. A target that matches nothing fails the run with a `scope_no_match` issue naming that target (`context.targets`), even when the other targets matched and validated cleanly. Through 0.14.2 the run failed only when no target matched at all, so a mistyped or quoted path beside a valid one passed without being validated.
+
 Every issue reports the `file_path` of the object it concerns, so issues from two files that share a name stay apart when a bare file name selects both.
 
 ### Unparseable object files
 
 An object file that is not valid YAML is reported as a `yaml_parse` issue against that path (exit `1`, and a complete report in `--json` mode) instead of raising a parser traceback. The file is not indexed, so no other check can see it — the issue is emitted regardless of `--check`.
+
+### Vendor rule ids
+
+`rule_id`, `rule_id_bundle` and `rule_id::<tenant>` are not keys of any platform block. A rule that still carries one fails the `schema` check with `external_id_in_rule` at that field. Vendor ids belong in [deployment state](../usage/concepts/deployment-state.md); move them with [`opentide deploy migrate-state`](./deploy.md#deploy-migrate-state). A full-workspace run also checks every `*.json` under `.opentide/states/deployment/`, including orphan shards whose rule was deleted, and fails each unusable one with its `deployment_state_*` code (a non-canonical file name, a second file for the same rule, or a tenant key with surrounding spaces included). A run narrowed with `--file`, `--uuid` or `--type` checks the shards of the selected rules only. A rule without a shard is fine.
 
 ### CVE check
 
@@ -177,6 +183,43 @@ Only the requested platform's engine is
 loaded — validating Sentinel never imports the CrowdStrike or HarfangLab
 modules. A platform with no `[[tenants]]` entry fails the same way, before the
 client is built, and names the file to edit.
+
+### Which tenants are checked
+
+A live check only reads, so it is not bound by the tenant `deployment`
+strategy the way `deploy` is. With no `--plan` (the `FULL` plan), every
+tenant a rule can reach is checked: `STAGING`, `PRODUCTION` and `ALWAYS`
+tenants, and a `MANUAL` tenant when the rule lists it under `tenants`. A
+rule's `tenants` list still limits it to those tenants. `--plan STAGING` or
+`--plan PRODUCTION` narrows the check to the tenants that plan deploys to.
+When that leaves every rule without a tenant (for example, only staging-only
+rules under `--plan PRODUCTION`), nothing needed checking: the result is
+`skipped` with exit `0`. Exit `2` is kept for rules that reach no configured
+tenant at all, where the check could never run.
+`deploy` itself is unchanged: a `FULL` deploy still targets only `ALWAYS`,
+listed `MANUAL` and plan-equal tenants.
+
+`--json` reports the plan and how many queries each tenant received. The sample is illustrative, because a live run needs tenant credentials:
+
+```json illustrative
+{
+  "platform": "sentinel",
+  "mode": "live",
+  "status": "passed",
+  "plan": "FULL",
+  "queries_validated": 4,
+  "queries_per_tenant": { "Staging": 2, "Production": 2 }
+}
+```
+
+A run that sends no query never reports `passed`. When the plan has rules for
+the platform but none of them resolves to a configured tenant, the command
+reports `skipped`, names the reason in `message` and `advice`, and exits `2`,
+the same code the generated CI credential guard uses for a check that did not
+run. Through 0.14.2 that case printed `Query validation passed` with zero
+queries sent, which made the generated pipeline's live gate a no-op for the
+usual `STAGING` + `PRODUCTION` tenant layout. A plan with no rules for the
+platform at all is still `skipped` with exit `0`: there is nothing to check.
 
 ### Supported platforms
 

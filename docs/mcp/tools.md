@@ -261,9 +261,24 @@ Deploy a rule to a platform. Defaults to a dry run — a real deploy requires an
 
 `action` is `"dry-run"` or `"deploy"` (or `"error"` when the rule is missing). `status` is the rule’s current deployment status string from the object, not a planned-action label.
 
+A real deploy the deployer refused or failed returns `"action": "error"`, `"status": "failed"` and `"error": "deployment_failed"`, with no vendor call for a refused rule: for example a rule that still carries `rule_id` (`external_id_in_rule`), or a create whose id could not be written (`deployment_state_write_failed`). The server log names the code. Each call starts from a clean outcome, so one failed call does not mark the next as failed.
+
+```json
+{
+  "action": "error",
+  "tenant": null,
+  "rule_id": "00000000-0000-4000-8003-000000000001",
+  "status": "failed",
+  "dry_run": false,
+  "platform": "sentinel",
+  "message": "Deployment failed: the deployer reported a rule error (see the log for its code, for example external_id_in_rule)",
+  "error": "deployment_failed"
+}
+```
+
 ## deployment_status
 
-Per-platform deployment state for a rule.
+Per-platform deployment state for a rule. Vendor rule ids come from the rule's [deployment state](../usage/concepts/deployment-state.md) shard, keyed by tenant.
 
 | Parameter | Type | Description |
 |-----------|------|-------------|
@@ -278,10 +293,18 @@ Per-platform deployment state for a rule.
   "found": true,
   "uuid": "00000000-0000-4000-8003-000000000001",
   "platforms": {
-    "sentinel": { "deployed": true, "rule_id": "abc-123", "tenants": ["contoso"] }
+    "defender_for_endpoint": {
+      "deployed": true,
+      "rule_id": "12345",
+      "external_ids": { "contoso": "12345" },
+      "tenants": []
+    },
+    "sentinel": { "deployed": true, "rule_id": null, "external_ids": {}, "tenants": ["contoso"] }
   }
 }
 ```
+
+`deployed` is true once a vendor id is recorded or the block names `tenants`. `external_ids` maps tenant name to the stored id (Defender for Endpoint, SentinelOne, CrowdStrike only). `rule_id` is that id when exactly one tenant is bound, otherwise `null`. A shard that cannot be read adds `state_error` with its `deployment_state_*` code.
 
 ## Agent workflows
 

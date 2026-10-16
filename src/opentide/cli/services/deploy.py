@@ -18,18 +18,47 @@ if TYPE_CHECKING:
 
 
 def _nothing_to_deploy(message: str, *, dry_run: bool, **fields: object) -> dict[str, object]:
-    """A skipped deploy, in the same envelope as one that planned rules."""
+    """A skipped deploy, in the same envelope as one that planned rules.
+
+    Planning can record a per-rule failure and still leave nothing to deploy,
+    for instance when ``make_deploy_plan`` refuses a rule with
+    ``external_id_in_rule``. That run failed: it is reported as such, not as a
+    clean skip.
+    """
+    from opentide.cli.exit_codes import deployment_outcome
+
+    outcome = deployment_outcome()
     result: dict[str, object] = {
         **fields,
-        "status": "skipped",
-        "message": message,
+        "status": "failed" if outcome.failed else "skipped",
+        "message": f"{message}; planning reported rule errors" if outcome.failed else message,
         "deployed": [],
         "dry_run": dry_run,
         "plan": {},
     }
+    if outcome.failed:
+        result["_exit_code"] = outcome.exit_code
     if dry_run:
         result["payloads"] = {}
     return result
+
+
+def keeps_deprecated(plan: Any, requested: bool | None) -> bool:
+    """Whether a deploy keeps rules whose status strategy is DISABLEMENT or DELETION.
+
+    The deployment spec defines both as deploy actions: DISABLEMENT disables
+    any active deployment of the rule, DELETION removes it. The PRODUCTION
+    allow-list includes both, so dropping them first meant that setting a
+    rule to DISABLED or REMOVED never reached the platform (#548). PRODUCTION
+    therefore keeps them unless ``--drop-deprecated`` says otherwise. Other
+    plans keep the historical default: a FULL deploy does not delete or
+    disable the whole retired catalogue unless asked.
+    """
+    from opentide.deployment import DeploymentStrategy
+
+    if requested is not None:
+        return requested
+    return plan is DeploymentStrategy.PRODUCTION
 
 
 def run_deploy(
@@ -39,11 +68,25 @@ def run_deploy(
     plan: str | None = None,
     dry_run: bool = False,
     skip_promotion: bool = False,
-    keep_deprecated: bool = False,
+    keep_deprecated: bool | None = None,
     wide: bool = False,
     skip_unconfigured: bool = False,
+    persist_state_externally: bool = False,
 ) -> dict[str, object]:
-    """Deploy detection rules (Orchestration/deploy.py parity)."""
+    """Deploy detection rules (Orchestration/deploy.py parity).
+
+    *keep_deprecated* ``None`` keeps ``DISABLEMENT`` and ``DELETION`` rules
+    for the ``PRODUCTION`` plan only; see :func:`keeps_deprecated`.
+    *persist_state_externally* lets a CI run other than ``PRODUCTION`` create
+    rules whose ids land in deployment state; the caller commits the shards.
+    """
+    from opentide.deployment.external_ids import PERSIST_EXTERNALLY_ENV
+
+    # Per run, like the plan: a long-lived process must not inherit it.
+    if persist_state_externally:
+        os.environ[PERSIST_EXTERNALLY_ENV] = "1"
+    else:
+        os.environ.pop(PERSIST_EXTERNALLY_ENV, None)
     plan_warnings: list[str] = []
     result = _deploy(
         ctx,
@@ -69,12 +112,16 @@ def _deploy(
     plan: str | None,
     dry_run: bool,
     skip_promotion: bool,
-    keep_deprecated: bool,
+    keep_deprecated: bool | None,
     wide: bool,
     skip_unconfigured: bool = False,
 ) -> dict[str, object]:
     ctx.apply_environment()
     os.environ["INDEX_OUTPUT"] = "cache"
+    # Each deploy grades itself. A long-lived process (MCP server, tests) must
+    # not inherit a previous run's failure or warning.
+    for flag in ("DEPLOYMENT_ERROR_RAISED", "DEPLOYMENT_WARNING_RAISED"):
+        os.environ.pop(flag, None)
     if plan is not None:
         ctx.set_deployment_plan(plan)
     from opentide.core.registry import OpenTide
@@ -107,7 +154,7 @@ def _deploy(
         deployment_list = make_deploy_plan(
             deployment_plan,
             wide_scope=wide,
-            keep_deprecated=keep_deprecated,
+            keep_deprecated=keeps_deprecated(deployment_plan, keep_deprecated),
             warnings=plan_warnings,
         )
     except MissingGitCheckout as exc:
@@ -149,8 +196,13 @@ def _deploy(
     missing_tenants = {error.system: error.config_path for error in tenantless}
     tenants_advice = "; ".join(error.advice for error in tenantless)
     if tenantless and not dry_run:
+        from opentide.cli.exit_codes import deployment_outcome
+
         detail = "; ".join(str(error) for error in tenantless)
-        if skip_unconfigured and len(tenantless) == len(deployment_list):
+        # --skip-unconfigured excuses missing tenants, not a rule that planning
+        # refused (for example external_id_in_rule): that run still fails.
+        refused = deployment_outcome().failed
+        if skip_unconfigured and len(tenantless) == len(deployment_list) and not refused:
             return {
                 "status": "skipped",
                 "message": f"Skipped deploy: {detail}",
@@ -162,7 +214,9 @@ def _deploy(
             }
         return {
             "status": "failed",
-            "message": f"Cannot deploy: {detail}",
+            "message": (
+                f"Planning refused rules; {detail}" if refused else f"Cannot deploy: {detail}"
+            ),
             "advice": tenants_advice,
             "missing_tenants": missing_tenants,
             "deployed": deployed,

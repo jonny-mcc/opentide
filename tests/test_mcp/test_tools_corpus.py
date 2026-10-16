@@ -72,6 +72,60 @@ def test_tool_deploy_rule_without_tenants_names_the_failure(tide_corpus_repo: Pa
     assert "TypeError" not in result["message"]
 
 
+def test_tool_deploy_rule_reports_a_refused_rule_as_failed(
+    tide_corpus_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Review issue 4: a refusal the deployer reports through the run flags is a failure.
+
+    The Sentinel rule still carries a vendor id, so the deployer refuses it
+    with external_id_in_rule before building the client.
+    """
+    from unittest.mock import MagicMock
+
+    from tests.corpus_support import clear_runtime_caches
+
+    uuid = CORPUS_RULE_UUIDS["sentinel"]
+    path = next(
+        p
+        for p in (tide_corpus_repo / "objects" / "rules").glob("*.yaml")
+        if uuid in p.read_text(encoding="utf-8")
+    )
+    text = path.read_text(encoding="utf-8")
+    path.write_text(
+        text.replace("  sentinel:\n", "  sentinel:\n    rule_id::contoso: 42\n", 1),
+        encoding="utf-8",
+    )
+    clear_runtime_caches()
+    monkeypatch.setattr(tools, "_missing_tenants", lambda *_: None)
+    service = MagicMock(name="SentinelService")
+    monkeypatch.setattr("opentide.platforms.sentinel.client.SentinelService", service)
+
+    result = tools.tool_deploy_rule(uuid, "sentinel", dry_run=False)
+
+    service.assert_not_called()
+    assert result["status"] == "failed"
+    assert result["action"] == "error"
+    assert result["error"] == "deployment_failed"
+
+
+def test_tool_deploy_rule_does_not_inherit_a_previous_failure(
+    tide_corpus_repo: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from opentide.models.rule import DeploymentResult, DetectionRule
+
+    def deployed(self: DetectionRule, platform: str, dry_run: bool = False) -> DeploymentResult:
+        return DeploymentResult(platform=platform, uuids=[self.metadata.uuid], dry_run=dry_run)
+
+    monkeypatch.setattr(DetectionRule, "deploy", deployed)
+    monkeypatch.setattr(tools, "_missing_tenants", lambda *_: None)
+    monkeypatch.setenv("DEPLOYMENT_ERROR_RAISED", "1")
+
+    result = tools.tool_deploy_rule(CORPUS_RULE_UUIDS["sentinel"], "sentinel", dry_run=False)
+
+    assert result["action"] == "deploy"
+    assert result["status"] != "failed"
+
+
 def test_tool_deploy_rule_unknown_platform_is_structured(tide_corpus_repo: Path) -> None:
     for dry_run in (True, False):
         result = tools.tool_deploy_rule(
@@ -90,12 +144,46 @@ def test_tool_deployment_status_configuration_is_not_a_deploy(tide_corpus_repo: 
     assert sentinel["rule_id"] is None
 
 
-def test_platform_deployment_state_uses_external_id() -> None:
-    recorded = tools._platform_deployment_state({"external_id": "abc-123", "tenants": ["contoso"]})
-    assert recorded == {"deployed": True, "rule_id": "abc-123", "tenants": ["contoso"]}
+def test_platform_deployment_state_uses_recorded_external_ids() -> None:
+    recorded = tools._platform_deployment_state({"tenants": ["contoso"]}, {"contoso": "12345"})
+    assert recorded == {
+        "deployed": True,
+        "rule_id": "12345",
+        "external_ids": {"contoso": "12345"},
+        "tenants": ["contoso"],
+    }
+    two = tools._platform_deployment_state({}, {"a": "1", "b": "2"})
+    assert two["deployed"] is True
+    assert two["rule_id"] is None
     authoring = tools._platform_deployment_state({"enabled": True, "query": "SecurityEvent"})
     assert authoring["deployed"] is False
     assert authoring["rule_id"] is None
+    assert authoring["external_ids"] == {}
+
+
+def test_tool_deployment_status_reads_the_deployment_state_shard(tide_corpus_repo: Path) -> None:
+    from opentide.states.deployment import record_external_id
+
+    uuid = CORPUS_RULE_UUIDS["defender_for_endpoint"]
+    record_external_id(uuid, "defender_for_endpoint", "contoso", 4242, tide_corpus_repo)
+    payload = tools.tool_deployment_status(uuid)
+    defender = payload["platforms"]["defender_for_endpoint"]
+    assert defender["deployed"] is True
+    assert defender["external_ids"] == {"contoso": "4242"}
+    assert defender["rule_id"] == "4242"
+    assert "state_error" not in payload
+
+
+def test_tool_deployment_status_reports_a_broken_shard(tide_corpus_repo: Path) -> None:
+    from opentide.states.deployment import shard_path
+
+    uuid = CORPUS_RULE_UUIDS["defender_for_endpoint"]
+    path = shard_path(uuid, tide_corpus_repo)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("{not json", encoding="utf-8")
+    payload = tools.tool_deployment_status(uuid)
+    assert payload["found"] is True
+    assert payload["state_error"]["code"] == "deployment_state_shape"
 
 
 def test_tool_deployment_status_missing_rule(tide_corpus_repo: Path) -> None:
